@@ -1,282 +1,131 @@
 import { AudioSystem } from "./audio";
 import {
-  baseStats,
-  enemyKinds,
-  getStageConfig,
-  itemNames,
+  biomeOrder,
+  biomes,
+  bossNames,
+  defaultSave,
+  equipmentNames,
   rarityColors,
   rarityOrder,
   slotIcons,
   slots,
-  TILE_SIZE,
-  upgrades,
 } from "./data";
-import { generateMaze, Random } from "./maze";
+import { Random, hash2 } from "./random";
+import {
+  CHUNK_TILES,
+  TILE,
+  Tile,
+} from "./types";
 import type {
-  EnemyKind,
+  Biome,
+  Boss,
+  ChunkChest,
+  ChunkHazard,
   Equipment,
   EquipmentSlot,
-  Maze,
+  FloatingText,
+  HudState,
+  MerchantOffer,
+  Particle,
+  Player,
+  Projectile,
   Rarity,
+  RewardChoice,
   SaveData,
-  StageConfig,
-  Upgrade,
-  Vec2,
+  TileId,
 } from "./types";
+import { World, type Arena } from "./world";
 
-type ChoiceOption = {
-  name: string;
-  description: string;
-  icon: string;
-  rarity: Rarity;
-  tag: string;
-  select: () => void;
-};
+const SAVE_KEY = "underdeep-save-v1";
+const FIXED_STEP = 1 / 60;
+const GRAVITY = 1550;
+const MAX_FALL = 720;
+const keyState = new Set<string>();
+const pressed = new Set<string>();
 
-type MerchantOffer = {
-  name: string;
-  description: string;
-  icon: string;
-  rarity: Rarity;
-  cost: number;
-  sold: boolean;
-  buy: () => boolean;
-};
-
-export interface HudState {
-  hp: number;
-  maxHp: number;
-  mana: number;
-  maxMana: number;
-  xp: number;
-  xpNeeded: number;
-  level: number;
-  gold: number;
-  keys: number;
-  equipmentPower: number;
-  floor: number;
-  floorName: string;
-  time: number;
-  timerDanger: boolean;
-  objective: string;
-  dashCooldown: number;
-  specialCooldown: number;
-  potionCharges: number;
-  ultimateCharge: number;
-  boss?: { name: string; hp: number; maxHp: number; phase: string };
-}
-
-export interface GameUI {
+interface GameUI {
   updateHud: (state: HudState) => void;
-  showChoices: (kicker: string, title: string, choices: ChoiceOption[]) => void;
-  showStageComplete: (title: string, rewards: string[]) => void;
-  showGameOver: (summary: string) => void;
-  showMerchant: (offers: MerchantOffer[], gold: number, close: () => void) => void;
-  showBossIntro: (name: string, floor: number) => void;
+  drawMinimap: (draw: (context: CanvasRenderingContext2D, width: number, height: number) => void) => void;
+  showChoices: (kicker: string, title: string, choices: RewardChoice[]) => void;
+  showMerchant: (offers: MerchantOffer[], close: () => void) => void;
+  showInventory: (save: SaveData, equipped: Map<EquipmentSlot, Equipment>) => void;
+  hideInventory: () => void;
+  showBossIntro: (name: string) => void;
   hideBossIntro: () => void;
-  setInteraction: (visible: boolean, label?: string) => void;
+  showVictory: (title: string, rewards: string[]) => void;
+  showDeath: (summary: string[]) => void;
+  setInteraction: (label?: string) => void;
   toast: (message: string, color?: string) => void;
   flash: (color: string) => void;
 }
 
-interface Player {
+interface Camera {
   x: number;
   y: number;
-  radius: number;
-  hp: number;
-  maxHp: number;
-  mana: number;
-  maxMana: number;
-  attack: number;
-  defense: number;
-  speed: number;
-  attackSpeed: number;
-  critChance: number;
-  critDamage: number;
-  lifeSteal: number;
-  level: number;
-  xp: number;
-  xpNeeded: number;
-  shootCooldown: number;
-  dashCooldown: number;
-  dashTimer: number;
-  dashReady: number;
-  invulnerable: number;
-  facing: number;
-  projectiles: number;
-  projectilePierce: number;
-  thorns: number;
-  auraDamage: number;
-  auraTimer: number;
-  chainChance: number;
-  shield: number;
-  shieldMax: number;
-  shieldRegen: number;
-  specialCooldown: number;
-  specialReady: number;
-  potionCharges: number;
-  ultimateCharge: number;
+  shake: number;
 }
 
-interface Enemy {
-  id: number;
+interface Merchant {
   x: number;
   y: number;
-  radius: number;
-  hp: number;
-  maxHp: number;
-  damage: number;
-  speed: number;
-  kind: EnemyKind;
-  elite: boolean;
-  boss: boolean;
-  name: string;
-  hitFlash: number;
-  attackCooldown: number;
-  specialCooldown: number;
-  chargeTimer: number;
-  phase: number;
-  dead: boolean;
+  available: boolean;
 }
 
-interface Projectile {
-  active: boolean;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  damage: number;
-  life: number;
-  pierce: number;
-  enemy: boolean;
-  color: string;
-}
-
-interface Chest {
-  x: number;
-  y: number;
-  opened: boolean;
-  pulse: number;
-  secret: boolean;
-  locked: boolean;
-}
-
-interface WorldFeature {
-  x: number;
-  y: number;
-  type: "merchant" | "fountain" | "puzzle";
-  used: boolean;
-  pulse: number;
-}
-
-interface KeyPickup {
-  x: number;
-  y: number;
-  collected: boolean;
-  pulse: number;
-}
-
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  size: number;
-  color: string;
-}
-
-interface FloatingText {
-  x: number;
-  y: number;
-  text: string;
-  color: string;
-  life: number;
-  critical: boolean;
-}
-
-const SAVE_KEY = "arcane-labyrinth-save-v1";
-const defaultSave: SaveData = {
-  version: 1,
-  unlockedFloor: 1,
-  selectedFloor: 1,
-  gold: 0,
-  stones: 0,
-  crystals: 0,
-  permanentPower: 0,
-  equipment: [],
-  equipped: {},
-};
-
-const keyMap = new Set<string>();
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+const approach = (value: number, target: number, amount: number): number =>
+  value < target ? Math.min(value + amount, target) : Math.max(value - amount, target);
 
 export class Game {
   readonly audio = new AudioSystem();
-  readonly upgradeStacks = new Map<string, number>();
-  readonly minimapCanvas: HTMLCanvasElement;
-
-  private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
-  private readonly ui: GameUI;
-  private readonly random = new Random();
-  private readonly sprites = new Map<number, HTMLImageElement>();
-  private readonly projectiles: Projectile[] = [];
-  private readonly particles: Particle[] = [];
-  private readonly texts: FloatingText[] = [];
-  private readonly enemies: Enemy[] = [];
-  private readonly chests: Chest[] = [];
-  private readonly features: WorldFeature[] = [];
-  private readonly keyPickups: KeyPickup[] = [];
-  private readonly visitedTraps = new Set<string>();
-  private readonly equipped = new Map<EquipmentSlot, Equipment>();
-  private readonly mouse = { x: 0, y: 0, down: false, active: false };
-
-  private save: SaveData;
-  private stage!: StageConfig;
-  private maze!: Maze;
-  player!: Player;
+  private readonly lightCanvas = document.createElement("canvas");
+  private readonly lightContext = this.lightCanvas.getContext("2d")!;
+  private save = this.loadSave();
+  private world = new World(this.save.seed || Date.now(), this.save.stage, this.save);
+  private player = this.createPlayer();
+  private boss?: Boss;
+  private arena?: Arena;
+  private merchant: Merchant = { x: 0, y: 0, available: true };
+  private projectiles: Projectile[] = [];
+  private particles: Particle[] = [];
+  private texts: FloatingText[] = [];
+  private equipped = new Map<EquipmentSlot, Equipment>();
+  private camera: Camera = { x: 0, y: 0, shake: 0 };
+  private random = new Random(Date.now());
   private running = false;
   private paused = false;
-  private gameOver = false;
-  private bossSpawned = false;
+  private accumulator = 0;
+  private previousTime = performance.now();
+  private stageTime = 180;
+  private bossIntro = 0;
   private bossDefeated = false;
-  private elapsed = 0;
-  private timeLeft = 0;
-  private flowTimer = 0;
-  private mapTimer = 0;
-  private screenShake = 0;
-  private lastTime = 0;
-  private animationFrame = 0;
-  private enemyId = 0;
-  private distanceMap: number[][] = [];
-  private nearestChest: Chest | null = null;
-  private nearestFeature: WorldFeature | null = null;
-  private keys = 0;
-  private bossIntroTimer = 0;
-  private arenaLocked = false;
+  private attackHit = false;
+  private minePulse = 0;
+  private autosaveTimer = 0;
   private heartbeatTimer = 0;
-  private gamepadAttack = false;
-  private lastInputX = 1;
-  private lastInputY = 0;
+  private footstepTimer = 0;
+  private hazardCooldown = 0;
+  private hudTimer = 0;
+  private mouse = { x: 0, y: 0, down: false, active: false };
+  private aim = { x: 1, y: 0 };
+  private gamepadInteract = false;
+  private previousGamepadInteract = false;
+  private previousGamepadJump = false;
+  private width = window.innerWidth;
+  private height = window.innerHeight;
 
-  constructor(canvas: HTMLCanvasElement, minimapCanvas: HTMLCanvasElement, ui: GameUI) {
-    this.canvas = canvas;
-    this.context = canvas.getContext("2d", { alpha: false }) as CanvasRenderingContext2D;
-    this.context.imageSmoothingEnabled = false;
-    this.minimapCanvas = minimapCanvas;
-    this.ui = ui;
-    this.save = this.loadSave();
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    private readonly ui: GameUI,
+  ) {
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Canvas 2D is unavailable");
+    this.context = context;
     this.hydrateEquipment();
     this.bindInput();
     this.resize();
     window.addEventListener("resize", () => this.resize());
-    for (let index = 0; index < 132; index += 1) this.loadSprite(index);
-  }
-
-  get hasSave(): boolean {
-    return localStorage.getItem(SAVE_KEY) !== null;
+    requestAnimationFrame((time) => this.frame(time));
   }
 
   get saveData(): SaveData {
@@ -287,540 +136,729 @@ export class Game {
     return this.running;
   }
 
-  setPaused(paused: boolean): void {
-    if (!this.running || this.gameOver) return;
-    this.paused = paused;
+  startNew(): void {
+    this.save = structuredClone(defaultSave);
+    this.save.seed = Math.floor(Math.random() * 0x7fffffff);
+    this.persist();
+    this.startStage(1);
   }
 
-  start(floor = this.save.selectedFloor): void {
-    this.audio.unlock();
-    this.stage = getStageConfig(Math.max(1, Math.min(this.save.unlockedFloor, floor)));
-    this.save.selectedFloor = this.stage.floor;
-    this.persistSave();
-    this.maze = generateMaze(
-      this.stage.mazeWidth,
-      this.stage.mazeHeight,
-      this.stage.treasureCount,
-      this.stage.trapCount,
-      Date.now(),
-    );
-    const spawn = this.cellCenter(this.maze.spawn);
-    const stats = this.computedStats();
-    this.player = {
-      x: spawn.x,
-      y: spawn.y,
-      radius: 13,
-      hp: stats.maxHp,
-      maxHp: stats.maxHp,
-      mana: 100,
-      maxMana: 100,
-      attack: stats.attack,
-      defense: stats.defense,
-      speed: stats.moveSpeed,
-      attackSpeed: stats.attackSpeed,
-      critChance: stats.critChance,
-      critDamage: stats.critDamage,
-      lifeSteal: stats.lifeSteal,
-      level: 1,
-      xp: 0,
-      xpNeeded: 40,
-      shootCooldown: 0,
-      dashCooldown: 1.65 * (1 - stats.cooldownReduction),
-      dashTimer: 0,
-      dashReady: 0,
-      invulnerable: 0,
-      facing: 0,
-      projectiles: 1,
-      projectilePierce: 0,
-      thorns: 0,
-      auraDamage: stats.elementDamage,
-      auraTimer: 0,
-      chainChance: 0,
-      shield: 0,
-      shieldMax: 0,
-      shieldRegen: 0,
-      specialCooldown: 8,
-      specialReady: 0,
-      potionCharges: 1,
-      ultimateCharge: 0,
-    };
-    this.running = true;
-    this.paused = false;
-    this.gameOver = false;
-    this.bossSpawned = false;
-    this.bossDefeated = false;
-    this.elapsed = 0;
-    this.timeLeft = this.stage.duration;
-    this.flowTimer = 0;
-    this.mapTimer = 0;
-    this.enemies.length = 0;
-    this.chests.length = 0;
-    this.features.length = 0;
-    this.keyPickups.length = 0;
-    this.projectiles.length = 0;
-    this.particles.length = 0;
-    this.texts.length = 0;
-    this.upgradeStacks.clear();
-    this.visitedTraps.clear();
-    this.keys = 0;
-    this.bossIntroTimer = 0;
-    this.arenaLocked = false;
-    this.heartbeatTimer = 0;
-    this.audio.setBossMode(false);
+  continue(): void {
+    if (!this.save.seed) this.save.seed = Math.floor(Math.random() * 0x7fffffff);
+    this.startStage(this.save.stage);
+  }
 
-    this.maze.treasure.forEach((point, index) => {
-      const center = this.cellCenter(point);
-      this.chests.push({ ...center, opened: false, pulse: index * 0.8, secret: false, locked: false });
-    });
-    this.maze.secrets.forEach((point, index) => {
-      const center = this.cellCenter(point);
-      this.chests.push({ ...center, opened: false, pulse: index, secret: true, locked: false });
-    });
-    this.maze.locked.forEach((point, index) => {
-      const center = this.cellCenter(point);
-      this.chests.push({ ...center, opened: false, pulse: index + 2, secret: false, locked: true });
-    });
-    const merchant = this.cellCenter(this.maze.merchant);
-    const fountain = this.cellCenter(this.maze.fountain);
-    this.features.push({ ...merchant, type: "merchant", used: false, pulse: 0 });
-    this.features.push({ ...fountain, type: "fountain", used: false, pulse: 1 });
-    this.maze.puzzles.forEach((point, index) => {
-      this.features.push({ ...this.cellCenter(point), type: "puzzle", used: false, pulse: index + 2 });
-    });
-    this.maze.keys.forEach((point, index) => {
-      this.keyPickups.push({ ...this.cellCenter(point), collected: false, pulse: index });
-    });
-    this.revealAroundPlayer();
-    this.updateFlowField();
-    this.lastTime = performance.now();
-    cancelAnimationFrame(this.animationFrame);
-    this.animationFrame = requestAnimationFrame((time) => this.loop(time));
-    this.ui.toast(`${this.stage.name} · Floor ${String(this.stage.floor).padStart(2, "0")}`, this.stage.palette[3]);
+  retry(): void {
+    this.startStage(this.save.stage);
+  }
+
+  nextStage(): void {
+    if (this.save.stage >= 20) {
+      this.running = false;
+      return;
+    }
+    this.save.stage += 1;
+    this.save.seed = Math.floor(Math.random() * 0x7fffffff);
+    this.save.modifiedTiles = {};
+    this.save.openedChests = [];
+    this.persist();
+    this.startStage(this.save.stage);
+  }
+
+  upgradePermanent(stat: keyof SaveData["permanent"]): boolean {
+    if (this.save.stones <= 0) {
+      this.ui.toast("An upgrade stone is required", "#ff6571");
+      return false;
+    }
+    this.save.stones -= 1;
+    this.save.permanent[stat] += 1;
+    this.persist();
+    this.ui.toast(`${stat.toUpperCase()} permanently increased`, "#e8b95c");
+    return true;
+  }
+
+  upgradeEquipment(slot: EquipmentSlot): boolean {
+    const item = this.equipped.get(slot);
+    if (!item) {
+      this.ui.toast(`No ${slot.toLowerCase()} equipped`, "#ff6571");
+      return false;
+    }
+    if (item.level >= 20) {
+      this.ui.toast(`${item.name} is already +20`, "#ff6571");
+      return false;
+    }
+    if (this.save.stones <= 0) {
+      this.ui.toast("An upgrade stone is required", "#ff6571");
+      return false;
+    }
+    this.save.stones -= 1;
+    item.level += 1;
+    const hpRatio = this.player.hp / this.player.maxHp;
+    const stats = this.computedStats();
+    this.player.maxHp = stats.hp;
+    this.player.hp = Math.max(1, this.player.maxHp * hpRatio);
+    this.player.maxMana = stats.mana;
+    this.player.attack = stats.attack;
+    this.player.armor = stats.defense;
+    this.player.speed = stats.speed;
+    this.player.mining = stats.mining;
+    this.player.crit = stats.crit;
+    this.persist();
+    this.audio.level();
+    this.ui.toast(`${item.name} upgraded to +${item.level}`, rarityColors[item.rarity]);
+    this.ui.showInventory(this.save, this.equipped);
+    return true;
+  }
+
+  toggleInventory(): void {
+    if (!this.running || this.bossIntro > 0) return;
+    this.paused = !this.paused;
+    if (this.paused) this.ui.showInventory(this.save, this.equipped);
+    else this.ui.hideInventory();
+  }
+
+  closeInventory(): void {
+    this.paused = false;
+    this.ui.hideInventory();
   }
 
   returnToTitle(): void {
     this.running = false;
-    cancelAnimationFrame(this.animationFrame);
+    this.paused = false;
     this.audio.setBossMode(false);
+    this.persist();
   }
 
-  continueAfterVictory(): boolean {
-    if (this.stage.floor >= 20) {
-      this.returnToTitle();
-      return false;
+  private startStage(stage: number): void {
+    this.save.stage = clamp(stage, 1, 20);
+    this.save.modifiedTiles = {};
+    this.save.openedChests = [];
+    this.world = new World(this.save.seed, this.save.stage, this.save);
+    this.hydrateEquipment();
+    this.player = this.createPlayer();
+    const surface = this.world.surfaceAt(0);
+    this.player.x = TILE * 0.5;
+    this.player.y = (surface - 1) * TILE - this.player.height / 2;
+    this.merchant = {
+      x: TILE * 8.5,
+      y: (this.world.surfaceAt(8) - 1) * TILE - 20,
+      available: true,
+    };
+    this.world.updateAround(this.player.x, this.player.y);
+    this.camera = { x: this.player.x, y: this.player.y, shake: 0 };
+    this.projectiles = [];
+    this.particles = [];
+    this.texts = [];
+    this.boss = undefined;
+    this.arena = undefined;
+    this.stageTime = 180;
+    this.bossIntro = 0;
+    this.bossDefeated = false;
+    this.running = true;
+    this.paused = false;
+    this.heartbeatTimer = 0;
+    this.hazardCooldown = 0;
+    this.hudTimer = 0;
+    this.audio.setBossMode(false);
+    this.persist();
+    this.ui.toast(`Stage ${String(this.save.stage).padStart(2, "0")} · the world has shifted`, "#e8b95c");
+  }
+
+  private createPlayer(): Player {
+    const stats = this.computedStats();
+    return {
+      x: 0, y: 0, vx: 0, vy: 0, width: 19, height: 37, facing: 1,
+      grounded: false, onWall: 0, onLadder: false, dropping: 0,
+      hp: stats.hp, maxHp: stats.hp, mana: stats.mana, maxMana: stats.mana,
+      armor: stats.defense, attack: stats.attack, mining: stats.mining,
+      speed: stats.speed, crit: stats.crit, level: 1, xp: 0, xpNext: 80,
+      coyote: 0, jumpBuffer: 0, jumps: 0, dashCooldown: 0, dashTime: 0,
+      rollTime: 0, attackCooldown: 0, attackTime: 0, combo: 0, comboTimer: 0,
+      skillCooldown: 0, invulnerable: 0, potionCooldown: 0, potions: 2,
+      ultimate: 0, animation: "idle", animationTime: 0,
+    };
+  }
+
+  private frame(time: number): void {
+    const elapsed = Math.min(0.1, (time - this.previousTime) / 1000);
+    this.previousTime = time;
+    this.accumulator += elapsed;
+    while (this.accumulator >= FIXED_STEP) {
+      if (this.running && !this.paused) this.update(FIXED_STEP);
+      this.accumulator -= FIXED_STEP;
     }
-    const next = Math.min(20, this.stage.floor + 1);
-    this.start(next);
-    return true;
-  }
-
-  retry(): void {
-    this.start(this.stage?.floor ?? this.save.selectedFloor);
-  }
-
-  forgeUpgrade(): boolean {
-    const items = [...this.equipped.values()].filter((item) => item.level < 20);
-    const cost = 50 + (items[0]?.level ?? 0) * 25;
-    if (items.length === 0 || this.save.gold < cost || this.save.stones < 1) {
-      const message = items.length === 0
-        ? "No equipment to upgrade"
-        : this.save.stones < 1 ? "An upgrade stone is required" : `Need ${cost} gold`;
-      this.ui.toast(message, "#ff6b74");
-      return false;
-    }
-    const item = this.random.pick(items);
-    this.save.gold -= cost;
-    this.save.stones -= 1;
-    item.level += 1;
-    const stored = this.save.equipment.find((entry) => entry.id === item.id);
-    if (stored) stored.level = item.level;
-    this.persistSave();
-    this.ui.toast(`${item.name} improved to +${item.level}`, rarityColors[item.rarity]);
-    return true;
-  }
-
-  equipmentSnapshot(): { items: Partial<Record<EquipmentSlot, Equipment>>; stats: ReturnType<Game["computedStats"]> } {
-    const items: Partial<Record<EquipmentSlot, Equipment>> = {};
-    this.equipped.forEach((item, slot) => { items[slot] = item; });
-    return { items, stats: this.computedStats() };
-  }
-
-  private loop(time: number): void {
-    const dt = Math.min(0.033, (time - this.lastTime) / 1000 || 0);
-    this.lastTime = time;
-    if (this.running) {
-      if (!this.paused && !this.gameOver) this.update(dt);
-      this.draw();
-      this.animationFrame = requestAnimationFrame((next) => this.loop(next));
-    }
+    this.draw(time / 1000);
+    requestAnimationFrame((next) => this.frame(next));
   }
 
   private update(dt: number): void {
-    this.elapsed += dt;
     this.audio.update(dt);
-    this.player.shootCooldown -= dt;
-    this.player.dashReady -= dt;
-    this.player.dashTimer -= dt;
-    this.player.invulnerable -= dt;
-    this.player.auraTimer -= dt;
-    this.player.shieldRegen -= dt;
-    this.player.specialReady -= dt;
-    this.screenShake = Math.max(0, this.screenShake - dt * 18);
-
-    if (this.bossIntroTimer > 0) {
-      this.bossIntroTimer -= dt;
-      this.screenShake = 5 + Math.sin(this.elapsed * 22) * 3;
+    this.world.updateAround(this.player.x, this.player.y);
+    this.updateTimers(dt);
+    if (this.bossIntro > 0) {
+      this.bossIntro -= dt;
+      this.camera.shake = Math.max(this.camera.shake, 7 + Math.sin(this.bossIntro * 20) * 4);
+      if (this.bossIntro <= 0) this.finishBossIntro();
+      pressed.clear();
       this.updateParticles(dt);
-      if (this.bossIntroTimer <= 0) this.finishBossIntro();
-      this.pushHud();
+      this.hudTimer -= dt;
+      if (this.hudTimer <= 0) {
+        this.hudTimer = 0.08;
+        this.pushHud();
+      }
       return;
     }
 
-    this.updateInput(dt);
-    this.revealAroundPlayer();
-    this.collectKeys();
-
-    if (!this.bossSpawned) {
-      this.timeLeft = Math.max(0, this.timeLeft - dt);
-      if (this.timeLeft <= 20) {
-        this.heartbeatTimer -= dt;
-        if (this.heartbeatTimer <= 0) {
-          this.audio.heartbeat();
-          this.heartbeatTimer = Math.max(0.36, 0.9 - (20 - this.timeLeft) * 0.025);
-        }
-      }
-      if (this.timeLeft <= 0) this.beginBossIntro();
-    }
-
-    this.flowTimer -= dt;
-    if (this.flowTimer <= 0) {
-      this.updateFlowField();
-      this.flowTimer = 0.3;
-    }
-
-    if (this.bossSpawned) this.updateEnemies(dt);
+    this.updatePlayer(dt);
+    this.updateMining(dt);
+    this.updateHazards(dt);
+    this.updateBoss(dt);
     this.updateProjectiles(dt);
-    this.updateTraps();
     this.updateParticles(dt);
-    this.checkInteraction();
-    this.mapTimer -= dt;
-    if (this.mapTimer <= 0) {
-      this.drawMinimap();
-      this.mapTimer = 0.15;
+    this.updateEnvironment(dt);
+    this.checkInteractions();
+    this.updateCamera(dt);
+    this.hudTimer -= dt;
+    if (this.hudTimer <= 0) {
+      this.hudTimer = 0.08;
+      this.pushHud();
     }
-    this.pushHud();
+    this.autosaveTimer += dt;
+    if (this.autosaveTimer >= 8) {
+      this.autosaveTimer = 0;
+      this.persist();
+    }
+    this.previousGamepadInteract = this.gamepadInteract;
+    pressed.clear();
   }
 
-  private updateInput(dt: number): void {
-    let dx = Number(keyMap.has("KeyD") || keyMap.has("ArrowRight")) - Number(keyMap.has("KeyA") || keyMap.has("ArrowLeft"));
-    let dy = Number(keyMap.has("KeyS") || keyMap.has("ArrowDown")) - Number(keyMap.has("KeyW") || keyMap.has("ArrowUp"));
-    let aimX = 0;
-    let aimY = 0;
-    this.gamepadAttack = false;
-
-    const gamepad = navigator.getGamepads?.()[0];
-    if (gamepad) {
-      const deadzone = 0.18;
-      if (Math.abs(gamepad.axes[0] ?? 0) > deadzone) dx = gamepad.axes[0];
-      if (Math.abs(gamepad.axes[1] ?? 0) > deadzone) dy = gamepad.axes[1];
-      aimX = Math.abs(gamepad.axes[2] ?? 0) > deadzone ? gamepad.axes[2] : 0;
-      aimY = Math.abs(gamepad.axes[3] ?? 0) > deadzone ? gamepad.axes[3] : 0;
-      this.gamepadAttack = Math.hypot(aimX, aimY) > deadzone || (gamepad.buttons[7]?.value ?? 0) > 0.2;
-      if (gamepad.buttons[0]?.pressed) {
-        if (this.nearestChest) this.openChest(this.nearestChest);
-        else if (this.nearestFeature) this.interactFeature(this.nearestFeature);
+  private updateTimers(dt: number): void {
+    this.player.coyote = Math.max(0, this.player.coyote - dt);
+    this.player.jumpBuffer = Math.max(0, this.player.jumpBuffer - dt);
+    this.player.dashCooldown = Math.max(0, this.player.dashCooldown - dt);
+    this.player.dashTime = Math.max(0, this.player.dashTime - dt);
+    this.player.rollTime = Math.max(0, this.player.rollTime - dt);
+    this.player.attackCooldown = Math.max(0, this.player.attackCooldown - dt);
+    this.player.attackTime = Math.max(0, this.player.attackTime - dt);
+    this.player.comboTimer = Math.max(0, this.player.comboTimer - dt);
+    this.player.skillCooldown = Math.max(0, this.player.skillCooldown - dt);
+    this.player.invulnerable = Math.max(0, this.player.invulnerable - dt);
+    this.player.potionCooldown = Math.max(0, this.player.potionCooldown - dt);
+    this.player.dropping = Math.max(0, this.player.dropping - dt);
+    this.hazardCooldown = Math.max(0, this.hazardCooldown - dt);
+    this.minePulse = Math.max(0, this.minePulse - dt);
+    this.camera.shake = Math.max(0, this.camera.shake - dt * 22);
+    if (!this.boss && !this.bossDefeated) {
+      this.stageTime = Math.max(0, this.stageTime - dt);
+      if (this.stageTime <= 20) {
+        this.heartbeatTimer -= dt;
+        if (this.heartbeatTimer <= 0) {
+          this.heartbeatTimer = Math.max(0.42, 0.95 - (20 - this.stageTime) * 0.025);
+          this.audio.heartbeat();
+        }
       }
-      if (gamepad.buttons[1]?.pressed && this.player.dashReady <= 0) this.dash(dx, dy);
+      if (this.stageTime <= 0 && this.bossIntro <= 0) this.beginBossIntro();
     }
+  }
 
-    const magnitude = Math.hypot(dx, dy);
-    if (magnitude > 0) {
-      dx /= magnitude;
-      dy /= magnitude;
-      this.lastInputX = dx;
-      this.lastInputY = dy;
-      const multiplier = this.player.dashTimer > 0 ? 3.4 : 1;
-      this.movePlayer(dx * this.player.speed * multiplier * dt, dy * this.player.speed * multiplier * dt);
+  private updatePlayer(dt: number): void {
+    const gamepad = navigator.getGamepads?.()[0];
+    const stickX = Math.abs(gamepad?.axes[0] ?? 0) > 0.18 ? gamepad!.axes[0] : 0;
+    const stickY = Math.abs(gamepad?.axes[1] ?? 0) > 0.18 ? gamepad!.axes[1] : 0;
+    const left = keyState.has("KeyA") || keyState.has("ArrowLeft");
+    const right = keyState.has("KeyD") || keyState.has("ArrowRight");
+    const up = keyState.has("KeyW") || keyState.has("ArrowUp");
+    const down = keyState.has("KeyS") || keyState.has("ArrowDown");
+    const move = clamp((right ? 1 : 0) - (left ? 1 : 0) + stickX, -1, 1);
+    const climb = clamp((down ? 1 : 0) - (up ? 1 : 0) + stickY, -1, 1);
+    const sprinting = keyState.has("ShiftLeft") || keyState.has("ShiftRight") || (gamepad?.buttons[10]?.pressed ?? false);
+    const gamepadJump = gamepad?.buttons[0]?.pressed ?? false;
+    const jumpHeld = keyState.has("Space") || gamepadJump;
+    this.gamepadInteract = gamepad?.buttons[4]?.pressed ?? false;
+
+    const jumpPressed = pressed.has("Space") || (gamepadJump && !this.previousGamepadJump);
+    if (jumpPressed && down) {
+      this.player.dropping = 0.25;
+      this.player.y += 3;
+    } else if (jumpPressed) {
+      this.player.jumpBuffer = 0.13;
     }
+    this.previousGamepadJump = gamepadJump;
+    if (pressed.has("KeyK") || gamepad?.buttons[1]?.pressed) this.tryDash(move);
+    if (pressed.has("KeyL")) this.tryRoll(move);
+    if (pressed.has("KeyJ") || gamepad?.buttons[2]?.pressed) this.tryAttack();
+    if (pressed.has("KeyR") || gamepad?.buttons[3]?.pressed) this.useSkill();
+    if (pressed.has("KeyF")) this.useUltimate();
+    if (pressed.has("KeyQ")) this.usePotion();
+    if (move !== 0) this.player.facing = move < 0 ? -1 : 1;
 
-    let angle = this.player.facing;
-    if (this.mouse.active) {
-      angle = Math.atan2(this.mouse.y - this.canvas.height / 2, this.mouse.x - this.canvas.width / 2);
-    } else if (Math.hypot(aimX, aimY) > 0.2) {
-      angle = Math.atan2(aimY, aimX);
+    const centerTile = this.world.getTile(Math.floor(this.player.x / TILE), Math.floor(this.player.y / TILE));
+    this.player.onLadder = this.world.isClimbable(centerTile);
+    if (this.player.onLadder && Math.abs(climb) > 0.05) {
+      this.player.vy = climb * 145;
+      this.player.vx = approach(this.player.vx, move * this.player.speed * 0.6, 1500 * dt);
+    } else if (this.player.dashTime > 0) {
+      this.player.vx = this.player.facing * 650;
+      this.player.vy = 0;
     } else {
-      const nearest = this.nearestEnemy();
-      if (nearest) angle = Math.atan2(nearest.y - this.player.y, nearest.x - this.player.x);
+      const maxSpeed = this.player.speed * (sprinting ? 1.43 : 1);
+      const acceleration = this.player.grounded ? 1900 : 1050;
+      this.player.vx = approach(this.player.vx, move * maxSpeed, acceleration * dt);
+      if (Math.abs(move) < 0.05 && this.player.grounded) this.player.vx = approach(this.player.vx, 0, 2400 * dt);
+      const liquid = this.world.isLiquid(centerTile);
+      const gravityScale = liquid ? 0.24 : !jumpHeld && this.player.vy < 0 ? 1.72 : 1;
+      this.player.vy = Math.min(MAX_FALL, this.player.vy + GRAVITY * gravityScale * dt);
+      if (liquid) {
+        this.player.vx *= 0.93;
+        this.player.vy = clamp(this.player.vy, -190, 220);
+        if (jumpHeld) this.player.vy -= 24;
+      }
     }
-    this.player.facing = angle;
-    if (this.bossSpawned && (this.mouse.down || this.gamepadAttack || keyMap.has("KeyJ")) && this.player.shootCooldown <= 0) this.shoot(angle);
+
+    this.player.onWall = this.detectWall();
+    if (!this.player.grounded && this.player.onWall !== 0 && this.player.vy > 0) {
+      const wallTx = Math.floor((this.player.x + this.player.onWall * (this.player.width / 2 + 2)) / TILE);
+      const headTy = Math.floor((this.player.y - this.player.height / 2) / TILE);
+      const ledgeOpen = !this.world.isSolid(this.world.getTile(wallTx, headTy - 1));
+      if (ledgeOpen && Math.sign(move) === this.player.onWall) this.player.vy = 0;
+      else this.player.vy = Math.min(this.player.vy, 135);
+    }
+
+    if (this.player.jumpBuffer > 0) {
+      if (this.player.grounded || this.player.coyote > 0) {
+        this.player.vy = -475;
+        this.player.grounded = false;
+        this.player.coyote = 0;
+        this.player.jumpBuffer = 0;
+        this.player.jumps = 1;
+        this.audio.jump();
+        this.burst(this.player.x, this.player.y + this.player.height / 2, "#b7c9ca", 8, 75);
+      } else if (this.player.onWall !== 0) {
+        this.player.vx = -this.player.onWall * 330;
+        this.player.vy = -450;
+        this.player.facing = this.player.onWall === 1 ? -1 : 1;
+        this.player.jumpBuffer = 0;
+        this.player.jumps = 1;
+        this.audio.jump();
+      } else if (this.player.jumps < 2) {
+        this.player.vy = -435;
+        this.player.jumpBuffer = 0;
+        this.player.jumps += 1;
+        this.audio.jump();
+        this.burst(this.player.x, this.player.y + 4, "#78dfe7", 12, 105);
+      }
+    }
+
+    this.movePlayer(this.player.vx * dt, this.player.vy * dt);
+    this.updatePlayerAnimation(move, sprinting);
+
+    if (this.player.grounded && Math.abs(this.player.vx) > 55) {
+      this.footstepTimer -= dt;
+      if (this.footstepTimer <= 0) {
+        this.footstepTimer = sprinting ? 0.18 : 0.27;
+        this.audio.step();
+        this.particle(this.player.x - this.player.facing * 7, this.player.y + this.player.height / 2, -this.player.facing * 26, -30, 0.28, 2, "#8e8170", 0);
+      }
+    }
   }
 
   private movePlayer(dx: number, dy: number): void {
-    const nextX = this.player.x + dx;
-    if (this.circleWalkable(nextX, this.player.y, this.player.radius)) this.player.x = nextX;
-    const nextY = this.player.y + dy;
-    if (this.circleWalkable(this.player.x, nextY, this.player.radius)) this.player.y = nextY;
+    this.player.grounded = false;
+    this.player.x += dx;
+    this.resolveHorizontal(dx);
+    this.player.y += dy;
+    this.resolveVertical(dy);
   }
 
-  private dash(dx: number, dy: number): void {
-    if (this.player.dashReady > 0) return;
-    if (Math.hypot(dx, dy) === 0) {
-      dx = this.lastInputX;
-      dy = this.lastInputY;
+  private resolveHorizontal(dx: number): void {
+    if (dx === 0) return;
+    const halfW = this.player.width / 2;
+    const halfH = this.player.height / 2 - 3;
+    const side = dx > 0 ? this.player.x + halfW : this.player.x - halfW;
+    const tx = Math.floor(side / TILE);
+    const top = Math.floor((this.player.y - halfH) / TILE);
+    const bottom = Math.floor((this.player.y + halfH) / TILE);
+    for (let ty = top; ty <= bottom; ty += 1) {
+      if (!this.world.isSolid(this.world.getTile(tx, ty))) continue;
+      this.player.x = dx > 0 ? tx * TILE - halfW - 0.01 : (tx + 1) * TILE + halfW + 0.01;
+      this.player.vx = 0;
+      break;
     }
-    this.lastInputX = dx;
-    this.lastInputY = dy;
-    this.player.dashTimer = 0.17;
-    this.player.dashReady = this.player.dashCooldown;
+  }
+
+  private resolveVertical(dy: number): void {
+    if (dy === 0) return;
+    const halfW = this.player.width / 2 - 3;
+    const halfH = this.player.height / 2;
+    const side = dy > 0 ? this.player.y + halfH : this.player.y - halfH;
+    const ty = Math.floor(side / TILE);
+    const left = Math.floor((this.player.x - halfW) / TILE);
+    const right = Math.floor((this.player.x + halfW) / TILE);
+    for (let tx = left; tx <= right; tx += 1) {
+      const tile = this.world.getTile(tx, ty);
+      const platformHit = dy > 0 && this.player.dropping <= 0 && this.world.isPlatform(tile) &&
+        this.player.y + halfH - dy <= ty * TILE + 3;
+      if (!this.world.isSolid(tile) && !platformHit) continue;
+      this.player.y = dy > 0 ? ty * TILE - halfH - 0.01 : (ty + 1) * TILE + halfH + 0.01;
+      if (dy > 0) {
+        if (this.player.vy > 330) {
+          this.camera.shake = Math.min(7, this.player.vy / 110);
+          this.burst(this.player.x, this.player.y + halfH, "#7d766c", 10, 95);
+        }
+        this.player.grounded = true;
+        this.player.coyote = 0.12;
+        this.player.jumps = 0;
+      }
+      this.player.vy = 0;
+      break;
+    }
+  }
+
+  private detectWall(): -1 | 0 | 1 {
+    const halfW = this.player.width / 2;
+    const top = Math.floor((this.player.y - this.player.height / 2 + 5) / TILE);
+    const bottom = Math.floor((this.player.y + this.player.height / 2 - 5) / TILE);
+    for (const side of [-1, 1] as const) {
+      const tx = Math.floor((this.player.x + side * (halfW + 2)) / TILE);
+      for (let ty = top; ty <= bottom; ty += 1) {
+        if (this.world.isSolid(this.world.getTile(tx, ty))) return side;
+      }
+    }
+    return 0;
+  }
+
+  private tryDash(move: number): void {
+    if (this.player.dashCooldown > 0) return;
+    if (move !== 0) this.player.facing = move < 0 ? -1 : 1;
+    this.player.dashCooldown = 1.05;
+    this.player.dashTime = 0.17;
     this.player.invulnerable = 0.25;
     this.audio.dash();
-    for (let i = 0; i < 14; i += 1) this.addParticle(this.player.x, this.player.y, "#65f1d0", 3, 120);
+    this.burst(this.player.x, this.player.y, "#73e5dc", 18, 170);
   }
 
-  private useSpecial(): void {
-    if (this.player.specialReady > 0 || !this.bossSpawned) return;
-    this.player.specialReady = this.player.specialCooldown;
-    for (let index = 0; index < 12; index += 1) {
-      const angle = (Math.PI * 2 * index) / 12;
-      this.activateProjectile({
-        x: this.player.x,
-        y: this.player.y,
-        vx: Math.cos(angle) * 420,
-        vy: Math.sin(angle) * 420,
-        radius: 6,
-        damage: this.player.attack * 1.35,
-        life: 1,
-        pierce: 1,
-        enemy: false,
-        color: "#f3bd58",
-      });
-    }
-    this.audio.level();
-    this.screenShake = 6;
+  private tryRoll(move: number): void {
+    if (!this.player.grounded || this.player.rollTime > 0) return;
+    if (move !== 0) this.player.facing = move < 0 ? -1 : 1;
+    this.player.rollTime = 0.35;
+    this.player.invulnerable = 0.38;
+    this.player.vx = this.player.facing * 410;
+    this.audio.roll();
   }
 
-  private usePotion(): void {
-    if (this.player.potionCharges <= 0 || this.player.hp >= this.player.maxHp) return;
-    this.player.potionCharges -= 1;
-    this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * 0.55);
-    this.audio.level();
-    for (let i = 0; i < 24; i += 1) this.addParticle(this.player.x, this.player.y, "#65e6a2", 4, 140);
+  private tryAttack(): void {
+    if (this.player.attackCooldown > 0) return;
+    this.player.combo = this.player.comboTimer > 0 ? this.player.combo % 3 + 1 : 1;
+    this.player.comboTimer = 0.5;
+    this.player.attackCooldown = this.player.combo === 3 ? 0.34 : 0.23;
+    this.player.attackTime = 0.18;
+    this.attackHit = false;
+    this.audio.attack();
+  }
+
+  private useSkill(): void {
+    if (this.player.skillCooldown > 0 || this.player.mana < 20) return;
+    this.player.skillCooldown = 2.8;
+    this.player.mana -= 20;
+    const angle = Math.atan2(this.aim.y, this.aim.x);
+    this.projectile({
+      x: this.player.x + Math.cos(angle) * 25,
+      y: this.player.y + Math.sin(angle) * 15,
+      vx: Math.cos(angle) * 520,
+      vy: Math.sin(angle) * 520,
+      radius: 7,
+      damage: this.player.attack * 2.2,
+      life: 1.5,
+      hostile: false,
+      color: "#67e4ff",
+    });
+    this.burst(this.player.x, this.player.y, "#67e4ff", 12, 130);
   }
 
   private useUltimate(): void {
-    if (this.player.ultimateCharge < 100 || !this.bossSpawned) return;
-    const boss = this.enemies.find((enemy) => enemy.boss && !enemy.dead);
-    if (!boss) return;
-    this.player.ultimateCharge = 0;
-    this.damageEnemy(boss, this.player.attack * 18, true, "#ffe69a");
-    this.player.invulnerable = 1.2;
-    this.screenShake = 18;
-    this.ui.flash("#f3bd58");
-    for (let i = 0; i < 60; i += 1) this.addParticle(boss.x, boss.y, "#ffe69a", 6, 300);
+    if (this.player.ultimate < 100 || !this.boss) return;
+    this.player.ultimate = 0;
+    this.damageBoss(this.player.attack * 18, true);
+    this.camera.shake = 19;
+    this.ui.flash("#ffe6a0");
+    this.burst(this.boss.x, this.boss.y, "#ffe6a0", 70, 330);
   }
 
-  private shoot(angle: number): void {
-    const count = this.player.projectiles;
-    const spread = Math.min(0.42, (count - 1) * 0.11);
-    for (let index = 0; index < count; index += 1) {
-      const offset = count === 1 ? 0 : -spread + (spread * 2 * index) / (count - 1);
-      const shotAngle = angle + offset;
-      this.activateProjectile({
-        x: this.player.x + Math.cos(shotAngle) * 18,
-        y: this.player.y + Math.sin(shotAngle) * 18,
-        vx: Math.cos(shotAngle) * 530,
-        vy: Math.sin(shotAngle) * 530,
-        radius: 5,
-        damage: this.player.attack,
-        life: 1.2,
-        pierce: this.player.projectilePierce,
-        enemy: false,
-        color: "#70f3d1",
-      });
+  private usePotion(): void {
+    if (this.player.potions <= 0 || this.player.potionCooldown > 0 || this.player.hp >= this.player.maxHp) return;
+    this.player.potions -= 1;
+    this.player.potionCooldown = 1;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * 0.55);
+    this.audio.heal();
+    this.burst(this.player.x, this.player.y, "#65e09c", 25, 130);
+  }
+
+  private updateMining(dt: number): void {
+    const interacting = keyState.has("KeyE") || this.mouse.down || this.gamepadInteract;
+    if (!interacting || this.nearChest() || this.nearMerchant()) {
+      this.world.cancelMining();
+      return;
     }
-    this.player.shootCooldown = 0.34 / this.player.attackSpeed;
-    this.audio.shoot();
+    const target = this.miningTarget();
+    if (!target) {
+      this.world.cancelMining();
+      return;
+    }
+    const result = this.world.mine(target.x, target.y, dt, this.player.mining);
+    this.player.animation = "mine";
+    this.player.animationTime += dt * 14;
+    this.minePulse -= dt;
+    if (this.minePulse <= 0) {
+      this.minePulse = 0.14;
+      this.audio.mine();
+      this.particle((target.x + 0.5) * TILE, (target.y + 0.5) * TILE, (Math.random() - 0.5) * 80, -40 - Math.random() * 60, 0.35, 3, "#baaa8b", 0);
+    }
+    if (!result.broken) return;
+    this.audio.breakBlock();
+    const worldX = (target.x + 0.5) * TILE;
+    const worldY = (target.y + 0.5) * TILE;
+    this.burst(worldX, worldY, this.tileColor(result.tile ?? Tile.Stone, biomes.stone), 13, 140);
+    if (result.resource) {
+      const amount = result.resource === "stone" ? 1 : result.resource === "diamond" || result.resource === "magic" ? 2 : 1;
+      this.save.resources[result.resource] += amount;
+      if (result.resource === "goldOre") this.save.gold += 4;
+      this.gainXp(result.resource === "stone" ? 2 : 7);
+      this.texts.push({ x: worldX, y: worldY, text: `+${amount} ${result.resource.toUpperCase()}`, color: "#e8c778", life: 0.85, critical: false });
+    }
+    if (result.tile === Tile.Explosive) this.explodeCrystal(target.x, target.y);
+  }
+
+  private miningTarget(): { x: number; y: number } | undefined {
+    let worldX = this.player.x + this.player.facing * TILE * 1.4;
+    let worldY = this.player.y;
+    if (this.mouse.active) {
+      worldX = this.mouse.x + this.camera.x - this.width / 2;
+      worldY = this.mouse.y + this.camera.y - this.height / 2;
+    }
+    const distance = Math.hypot(worldX - this.player.x, worldY - this.player.y);
+    if (distance > TILE * 5.2) return undefined;
+    const dx = worldX - this.player.x;
+    const dy = worldY - this.player.y;
+    const length = Math.max(1, distance);
+    this.aim.x = dx / length;
+    this.aim.y = dy / length;
+    return { x: Math.floor(worldX / TILE), y: Math.floor(worldY / TILE) };
+  }
+
+  private explodeCrystal(tx: number, ty: number): void {
+    for (let y = ty - 2; y <= ty + 2; y += 1) {
+      for (let x = tx - 2; x <= tx + 2; x += 1) {
+        if (Math.hypot(x - tx, y - ty) <= 2.35 && this.world.isSolid(this.world.getTile(x, y))) this.world.setTile(x, y, Tile.Air);
+      }
+    }
+    this.camera.shake = 15;
+    this.ui.flash("#ad74ff");
+    this.burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, "#b66dff", 42, 300);
+    if (Math.hypot((tx + 0.5) * TILE - this.player.x, (ty + 0.5) * TILE - this.player.y) < TILE * 3) this.damagePlayer(24);
+  }
+
+  private updateHazards(dt: number): void {
+    for (const chunk of this.world.loadedChunks) {
+      for (const hazard of chunk.hazards) {
+        if (!hazard.active) continue;
+        hazard.phase += dt;
+        if (hazard.kind === "saw") {
+          hazard.x = hazard.baseX + Math.sin(hazard.phase * 1.4) * TILE * 3;
+          hazard.y = hazard.baseY - 8;
+        } else if (hazard.kind === "boulder") {
+          hazard.x = hazard.baseX + Math.sin(hazard.phase * 0.8) * TILE * 2.4;
+          hazard.phase += dt * 0.4;
+        } else {
+          const close = Math.abs(this.player.x - hazard.x) < TILE * 1.5 && this.player.y > hazard.y;
+          if (close) hazard.vy = Math.min(500, hazard.vy + 900 * dt);
+          hazard.y += hazard.vy * dt;
+          const below = this.world.getTile(Math.floor(hazard.x / TILE), Math.floor((hazard.y + 10) / TILE));
+          if (hazard.vy > 0 && this.world.isSolid(below)) {
+            hazard.y = hazard.baseY;
+            hazard.vy = 0;
+          }
+        }
+        if (Math.hypot(hazard.x - this.player.x, hazard.y - this.player.y) < 27) this.damagePlayer(16 + this.save.stage * 1.5);
+      }
+    }
+  }
+
+  private updateEnvironment(dt: number): void {
+    const feetX = Math.floor(this.player.x / TILE);
+    const feetY = Math.floor((this.player.y + this.player.height / 2 - 2) / TILE);
+    const tile = this.world.getTile(feetX, feetY);
+    if (tile === Tile.Spikes) this.damagePlayer(18 + this.save.stage);
+    if (tile === Tile.Lava) {
+      this.damagePlayer((11 + this.save.stage * 0.8) * dt * 3);
+      this.burst(this.player.x, this.player.y + 10, "#ff623e", 1, 45);
+    }
+    if (tile === Tile.Poison) {
+      this.damagePlayer((5 + this.save.stage * 0.35) * dt * 2);
+      if (Math.random() < dt * 8) this.particle(this.player.x + (Math.random() - 0.5) * 20, this.player.y + 15, 0, -35, 0.7, 4, "#91d94d", 6);
+    }
+    this.player.mana = Math.min(this.player.maxMana, this.player.mana + dt * 5);
+    const depth = Math.max(0, Math.floor(this.player.y / TILE) - this.world.surfaceAt(Math.floor(this.player.x / TILE)));
+    this.save.bestDepth = Math.max(this.save.bestDepth, depth);
   }
 
   private beginBossIntro(): void {
-    if (this.bossIntroTimer > 0 || this.bossSpawned) return;
-    this.timeLeft = 0;
-    this.bossIntroTimer = 3.2;
-    this.arenaLocked = true;
-    this.screenShake = 18;
+    if (this.bossIntro > 0 || this.boss) return;
+    this.arena = this.world.createArena(this.player.x, this.player.y);
+    this.bossIntro = 3.5;
+    this.audio.silence();
     this.audio.warning();
-    this.ui.flash("#c7253f");
-    this.ui.showBossIntro(this.stage.bossName, this.stage.floor);
+    this.ui.showBossIntro(bossNames[this.save.stage - 1]);
+    this.ui.flash("#c42a42");
+    this.camera.shake = 18;
   }
 
   private finishBossIntro(): void {
-    const center = this.cellCenter(this.maze.boss);
-    this.player.x = center.x;
-    this.player.y = center.y + TILE_SIZE * 1.45;
-    this.player.invulnerable = 1.5;
-    this.projectiles.forEach((projectile) => { projectile.active = false; });
-    this.bossSpawned = true;
-    this.audio.setBossMode(true);
-    this.audio.boss();
-    const kind = enemyKinds[Math.min(enemyKinds.length - 1, Math.floor(this.stage.floor / 3) + 2)];
-    this.enemies.push({
-      id: ++this.enemyId,
-      ...center,
-      radius: this.stage.bossSize,
-      hp: this.stage.bossHp,
-      maxHp: this.stage.bossHp,
-      damage: this.stage.bossDamage,
-      speed: this.stage.bossSpeed,
-      kind,
-      elite: true,
-      boss: true,
-      name: this.stage.bossName,
-      hitFlash: 0,
-      attackCooldown: 1,
-      specialCooldown: 1.5,
-      chargeTimer: 0,
+    if (!this.arena) return;
+    this.player.x = this.arena.left + TILE * 4;
+    this.player.y = this.arena.bottom - TILE * 2.8;
+    this.player.vx = 0;
+    this.player.vy = 0;
+    this.player.invulnerable = 1.4;
+    const hp = 650 * Math.pow(1.22, this.save.stage - 1);
+    this.boss = {
+      name: bossNames[this.save.stage - 1],
+      x: this.arena.right - TILE * 6,
+      y: this.arena.bottom - TILE * 3.2,
+      vx: 0,
+      vy: 0,
+      width: 58 + this.save.stage * 1.1,
+      height: 64 + this.save.stage * 1.15,
+      hp,
+      maxHp: hp,
       phase: 1,
+      cooldown: 1.4,
+      contactDamage: 14 * Math.pow(1.115, this.save.stage - 1),
+      flash: 0,
       dead: false,
-    });
-    this.maze.cells[this.maze.boss.y][this.maze.boss.x].discovered = true;
+    };
     this.ui.hideBossIntro();
-    this.ui.flash("#d8a84c");
-    this.ui.toast(`${this.stage.bossName} · The arena is sealed`, "#f3bd58");
-    this.screenShake = 14;
+    this.audio.setBossTheme(this.save.stage);
+    this.audio.setBossMode(true);
+    this.camera.shake = 12;
   }
 
-  private updateEnemies(dt: number): void {
-    for (const enemy of this.enemies) {
-      if (enemy.dead) continue;
-      enemy.hitFlash -= dt;
-      enemy.attackCooldown -= dt;
-      enemy.specialCooldown -= dt;
-      enemy.chargeTimer -= dt;
-      const dx = this.player.x - enemy.x;
-      const dy = this.player.y - enemy.y;
-      const distance = Math.max(1, Math.hypot(dx, dy));
-      const nx = dx / distance;
-      const ny = dy / distance;
+  private updateBoss(dt: number): void {
+    const boss = this.boss;
+    if (!boss || boss.dead || !this.arena) return;
+    boss.cooldown -= dt;
+    boss.flash = Math.max(0, boss.flash - dt);
+    const ratio = boss.hp / boss.maxHp;
+    boss.phase = ratio > 0.66 ? 1 : ratio > 0.3 ? 2 : 3;
+    const dx = this.player.x - boss.x;
+    const distance = Math.abs(dx);
+    const speed = 70 + this.save.stage * 2.6 + boss.phase * 12;
+    boss.vx = approach(boss.vx, Math.sign(dx) * speed, 420 * dt);
+    boss.x = clamp(boss.x + boss.vx * dt, this.arena.left + TILE * 2, this.arena.right - TILE * 2);
+    boss.y = this.arena.bottom - boss.height / 2 - TILE;
 
-      if (enemy.boss) {
-        const hpRatio = enemy.hp / enemy.maxHp;
-        enemy.phase = hpRatio > 0.66 ? 1 : hpRatio > 0.3 ? 2 : 3;
-        if (enemy.specialCooldown <= 0) {
-          this.useBossPattern(enemy, Math.atan2(dy, dx));
-          enemy.specialCooldown = Math.max(0.62, 2.7 - enemy.phase * 0.45 - this.stage.floor * 0.025);
-        }
-      }
-
-      const movement = enemy.chargeTimer > 0
-        ? { x: nx * enemy.speed * 2.7, y: ny * enemy.speed * 2.7 }
-        : this.enemyDirection(enemy, nx, ny);
-      const speedMultiplier = enemy.boss ? 1 + (enemy.phase - 1) * 0.2 : 1;
-      this.moveEnemy(enemy, movement.x * speedMultiplier * dt, movement.y * speedMultiplier * dt);
-
-      if (distance < this.player.radius + enemy.radius + 3 && enemy.attackCooldown <= 0) {
-        this.damagePlayer(enemy.damage);
-        enemy.attackCooldown = enemy.boss ? 0.6 : 0.9;
-        if (this.player.thorns > 0) this.damageEnemy(enemy, enemy.damage * this.player.thorns, false);
-      }
+    if (boss.cooldown <= 0) {
+      this.bossPattern(boss);
+      boss.cooldown = Math.max(0.55, 2.25 - boss.phase * 0.28 - this.save.stage * 0.025);
     }
+    if (distance < (boss.width + this.player.width) / 2 + 5) this.damagePlayer(boss.contactDamage);
 
-    if (this.player.auraDamage > 0 && this.player.auraTimer <= 0) {
-      this.player.auraTimer = 0.6;
-      for (const enemy of this.enemies) {
-        if (!enemy.dead && Math.hypot(enemy.x - this.player.x, enemy.y - this.player.y) < 115) {
-          this.damageEnemy(enemy, this.player.auraDamage, false, "#ff9d47");
-        }
+    if (this.player.attackTime > 0 && !this.attackHit) {
+      const range = 64 + this.player.combo * 9;
+      if (Math.hypot(boss.x - this.player.x, boss.y - this.player.y) < range) {
+        this.attackHit = true;
+        const critical = Math.random() < this.player.crit;
+        this.damageBoss(this.player.attack * (1 + this.player.combo * 0.22) * (critical ? 1.8 : 1), critical);
       }
-      for (let i = 0; i < 12; i += 1) this.addParticle(this.player.x, this.player.y, "#ff7a3d", 3, 90);
     }
   }
 
-  private enemyDirection(enemy: Enemy, directX: number, directY: number): Vec2 {
-    const cell = this.worldToCell(enemy.x, enemy.y);
-    const currentDistance = this.distanceMap[cell.y]?.[cell.x] ?? Infinity;
-    let best = { x: directX, y: directY };
-    let bestDistance = currentDistance;
-    for (const offset of [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }]) {
-      const distance = this.distanceMap[cell.y + offset.y]?.[cell.x + offset.x] ?? Infinity;
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        const target = this.cellCenter({ x: cell.x + offset.x, y: cell.y + offset.y });
-        const dx = target.x - enemy.x;
-        const dy = target.y - enemy.y;
-        const magnitude = Math.max(1, Math.hypot(dx, dy));
-        best = { x: dx / magnitude, y: dy / magnitude };
+  private bossPattern(boss: Boss): void {
+    const pattern = (this.save.stage - 1) % 6;
+    const angle = Math.atan2(this.player.y - boss.y, this.player.x - boss.x);
+    if (pattern === 0) {
+      this.radialBossShots(boss, 7 + boss.phase * 3, "#e34c62");
+    } else if (pattern === 1) {
+      const count = 3 + boss.phase * 2;
+      for (let index = 0; index < count; index += 1) this.bossShot(boss, angle + (index - (count - 1) / 2) * 0.14, "#b86cff");
+    } else if (pattern === 2) {
+      this.radialBossShots(boss, 9 + boss.phase * 2, "#6ecbff");
+      boss.vx = Math.sign(this.player.x - boss.x) * 430;
+      this.camera.shake = 8;
+    } else if (pattern === 3) {
+      for (let index = 0; index < 4 + boss.phase; index += 1) {
+        const x = this.arena!.left + TILE * (3 + Math.random() * 27);
+        this.projectile({ x, y: this.arena!.top + 20, vx: 0, vy: 260 + this.save.stage * 7, radius: 9, damage: boss.contactDamage * 0.85, life: 4, hostile: true, color: "#ff9d49" });
       }
+    } else if (pattern === 4) {
+      this.radialBossShots(boss, 6 + boss.phase * 4, "#9be35a");
+      for (let index = 0; index < boss.phase; index += 1) this.bossShot(boss, angle + (Math.random() - 0.5) * 0.4, "#e5f27a");
+    } else {
+      this.radialBossShots(boss, 10 + boss.phase * 3, "#e8b95c");
+      boss.vx = Math.sign(this.player.x - boss.x) * 560;
+      this.camera.shake = 12;
     }
-    return { x: best.x * enemy.speed, y: best.y * enemy.speed };
   }
 
-  private moveEnemy(enemy: Enemy, dx: number, dy: number): void {
-    const nextX = enemy.x + dx;
-    if (this.circleWalkable(nextX, enemy.y, enemy.radius)) enemy.x = nextX;
-    const nextY = enemy.y + dy;
-    if (this.circleWalkable(enemy.x, nextY, enemy.radius)) enemy.y = nextY;
+  private radialBossShots(boss: Boss, count: number, color: string): void {
+    for (let index = 0; index < count; index += 1) this.bossShot(boss, index / count * Math.PI * 2, color);
   }
 
-  private enemyShot(enemy: Enemy, angle: number): void {
-    this.activateProjectile({
-      x: enemy.x,
-      y: enemy.y,
-      vx: Math.cos(angle) * 235,
-      vy: Math.sin(angle) * 235,
-      radius: enemy.boss ? 7 : 5,
-      damage: enemy.damage * 0.75,
-      life: 2.4,
-      pierce: 0,
-      enemy: true,
-      color: enemy.boss ? "#ff5f82" : "#c37aff",
+  private bossShot(boss: Boss, angle: number, color: string): void {
+    const speed = 205 + this.save.stage * 5 + boss.phase * 22;
+    this.projectile({
+      x: boss.x + Math.cos(angle) * boss.width * 0.4,
+      y: boss.y + Math.sin(angle) * boss.height * 0.35,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      radius: 6 + boss.phase,
+      damage: boss.contactDamage * 0.75,
+      life: 4,
+      hostile: true,
+      color,
     });
   }
 
-  private radialBurst(enemy: Enemy, count: number, color: string): void {
-    for (let index = 0; index < count; index += 1) {
-      const angle = (Math.PI * 2 * index) / count + this.elapsed * 0.4;
-      this.activateProjectile({
-        x: enemy.x,
-        y: enemy.y,
-        vx: Math.cos(angle) * (190 + enemy.phase * 20),
-        vy: Math.sin(angle) * (190 + enemy.phase * 20),
-        radius: 6,
-        damage: enemy.damage * 0.65,
-        life: 3,
-        pierce: 0,
-        enemy: true,
-        color,
-      });
+  private damageBoss(amount: number, critical: boolean): void {
+    const boss = this.boss;
+    if (!boss || boss.dead) return;
+    boss.hp -= amount;
+    boss.flash = 0.09;
+    this.player.ultimate = Math.min(100, this.player.ultimate + amount / boss.maxHp * 190);
+    this.audio.bossHit();
+    this.texts.push({ x: boss.x, y: boss.y - boss.height / 2, text: `${Math.round(amount)}`, color: critical ? "#ffe47f" : "#f0eee6", life: 0.7, critical });
+    this.burst(boss.x, boss.y, critical ? "#ffe47f" : "#e85666", critical ? 10 : 4, 150);
+    if (critical) {
+      this.camera.shake = Math.max(this.camera.shake, 5);
+      this.ui.flash("#ffe47f");
     }
+    if (boss.hp <= 0) this.completeStage();
   }
 
-  private useBossPattern(enemy: Enemy, targetAngle: number): void {
-    const pattern = (this.stage.floor - 1) % 5;
-    const bonus = Math.floor(this.stage.floor / 5);
-    if (pattern === 0) {
-      this.radialBurst(enemy, 7 + enemy.phase * 3 + bonus, "#e75d88");
-    } else if (pattern === 1) {
-      const shots = 3 + enemy.phase * 2;
-      for (let index = 0; index < shots; index += 1) {
-        const offset = (index - (shots - 1) / 2) * 0.16;
-        this.enemyShot(enemy, targetAngle + offset);
-      }
-    } else if (pattern === 2) {
-      this.radialBurst(enemy, 8 + enemy.phase * 2 + bonus, "#b56cff");
-      window.setTimeout(() => {
-        if (!enemy.dead && this.running) this.radialBurst(enemy, 8 + enemy.phase * 2 + bonus, "#7c8dff");
-      }, 260);
-    } else if (pattern === 3) {
-      enemy.chargeTimer = 0.75;
-      this.radialBurst(enemy, 6 + enemy.phase * 2, "#ff9a55");
-      this.screenShake = 10;
-    } else {
-      this.radialBurst(enemy, 10 + enemy.phase * 3 + bonus, "#e1b75e");
-      for (let index = 0; index < enemy.phase + 1; index += 1) {
-        this.enemyShot(enemy, targetAngle + (index - enemy.phase / 2) * 0.24);
-      }
-    }
+  private completeStage(): void {
+    if (!this.boss || this.boss.dead) return;
+    this.boss.dead = true;
+    this.bossDefeated = true;
+    this.audio.victory();
+    this.camera.shake = 20;
+    this.burst(this.boss.x, this.boss.y, "#ffc96b", 90, 390);
+    if (this.arena) this.world.unlockArena(this.arena);
+    const gold = 130 + this.save.stage * 52;
+    const stones = 1 + Math.floor(this.save.stage / 5);
+    const materials = 2 + Math.floor(this.save.stage / 4);
+    const item = this.generateEquipment(2);
+    this.save.gold += gold;
+    this.save.stones += stones;
+    this.save.materials += materials;
+    this.save.permanent.attack += 1;
+    this.acquireEquipment(item);
+    this.persist();
+    this.paused = true;
+    window.setTimeout(() => {
+      this.ui.showVictory(
+        this.save.stage === 20 ? "THE GOD BENEATH HAS FALLEN" : `STAGE ${String(this.save.stage).padStart(2, "0")} CONQUERED`,
+        [`◆ ${gold} GOLD`, `⬡ ${stones} UPGRADE STONES`, `◈ ${materials} RARE MATERIALS`, `${item.icon} ${item.name}`, "⚔ +1 PERMANENT DAMAGE"],
+      );
+    }, 850);
   }
 
   private updateProjectiles(dt: number): void {
@@ -829,398 +867,282 @@ export class Game {
       projectile.life -= dt;
       projectile.x += projectile.vx * dt;
       projectile.y += projectile.vy * dt;
-      if (projectile.life <= 0 || !this.circleWalkable(projectile.x, projectile.y, projectile.radius)) {
+      if (projectile.life <= 0 || this.world.isSolid(this.world.getTile(Math.floor(projectile.x / TILE), Math.floor(projectile.y / TILE)))) {
         projectile.active = false;
         continue;
       }
-
-      if (projectile.enemy) {
-        if (Math.hypot(projectile.x - this.player.x, projectile.y - this.player.y) < projectile.radius + this.player.radius) {
+      if (projectile.hostile) {
+        if (Math.hypot(projectile.x - this.player.x, projectile.y - this.player.y) < projectile.radius + this.player.width / 2) {
           projectile.active = false;
           this.damagePlayer(projectile.damage);
         }
-        continue;
-      }
-
-      for (const enemy of this.enemies) {
-        if (enemy.dead) continue;
-        if (Math.hypot(projectile.x - enemy.x, projectile.y - enemy.y) >= projectile.radius + enemy.radius) continue;
-        const critical = this.random.next() < this.player.critChance;
-        const damage = projectile.damage * (critical ? this.player.critDamage : 1);
-        this.damageEnemy(enemy, damage, critical);
-        if (this.player.lifeSteal > 0) this.player.hp = Math.min(this.player.maxHp, this.player.hp + damage * this.player.lifeSteal);
-        if (this.player.chainChance > 0 && this.random.next() < this.player.chainChance) this.chainLightning(enemy, damage * 0.55);
-        projectile.pierce -= 1;
-        if (projectile.pierce < 0) projectile.active = false;
-        break;
+      } else if (this.boss && !this.boss.dead &&
+        Math.abs(projectile.x - this.boss.x) < this.boss.width / 2 + projectile.radius &&
+        Math.abs(projectile.y - this.boss.y) < this.boss.height / 2 + projectile.radius) {
+        projectile.active = false;
+        const critical = Math.random() < this.player.crit;
+        this.damageBoss(projectile.damage * (critical ? 1.8 : 1), critical);
       }
     }
   }
 
-  private damageEnemy(enemy: Enemy, amount: number, critical: boolean, color?: string): void {
-    if (enemy.dead) return;
-    enemy.hp -= amount;
-    if (enemy.boss) this.player.ultimateCharge = Math.min(100, this.player.ultimateCharge + amount / enemy.maxHp * 180);
-    enemy.hitFlash = 0.09;
-    this.audio.hit(critical);
-    this.texts.push({
-      x: enemy.x,
-      y: enemy.y - enemy.radius,
-      text: String(Math.round(amount)),
-      color: color ?? (critical ? "#ffd866" : "#ecf8ff"),
-      life: 0.65,
-      critical,
-    });
-    for (let i = 0; i < (critical ? 8 : 3); i += 1) this.addParticle(enemy.x, enemy.y, color ?? enemy.kind.accent, critical ? 4 : 2, 110);
-    if (critical) this.screenShake = Math.max(this.screenShake, 4);
-    if (enemy.hp <= 0) this.killEnemy(enemy);
-  }
-
-  private killEnemy(enemy: Enemy): void {
-    enemy.dead = true;
-    for (let i = 0; i < 60; i += 1) this.addParticle(enemy.x, enemy.y, "#ffca69", 6, 260);
-    this.completeStage();
-  }
-
-  private chainLightning(source: Enemy, amount: number): void {
-    const target = this.enemies
-      .filter((enemy) => !enemy.dead && enemy.id !== source.id && Math.hypot(enemy.x - source.x, enemy.y - source.y) < 150)
-      .sort((a, b) => Math.hypot(a.x - source.x, a.y - source.y) - Math.hypot(b.x - source.x, b.y - source.y))[0];
-    if (!target) {
-      this.damageEnemy(source, amount, false, "#80dfff");
-      return;
-    }
-    this.damageEnemy(target, amount, false, "#80dfff");
-    const steps = 8;
-    for (let index = 0; index < steps; index += 1) {
-      const t = index / steps;
-      this.particles.push({
-        x: source.x + (target.x - source.x) * t,
-        y: source.y + (target.y - source.y) * t,
-        vx: 0,
-        vy: 0,
-        life: 0.18,
-        maxLife: 0.18,
-        size: 3,
-        color: "#8deaff",
-      });
-    }
-  }
-
-  private damagePlayer(rawDamage: number): void {
-    if (this.player.invulnerable > 0 || this.gameOver) return;
-    let damage = Math.max(1, rawDamage - this.player.defense * 0.7);
-    if (this.player.shield > 0) {
-      const absorbed = Math.min(this.player.shield, damage);
-      this.player.shield -= absorbed;
-      damage -= absorbed;
-    }
-    this.player.hp -= damage;
-    this.player.invulnerable = 0.4;
-    this.player.shieldRegen = 4;
+  private damagePlayer(amount: number): void {
+    if (this.player.invulnerable > 0 || this.hazardCooldown > 0 || !this.running) return;
+    const reduced = Math.max(1, amount - this.player.armor * 0.45);
+    this.player.hp -= reduced;
+    this.player.invulnerable = 0.7;
+    this.hazardCooldown = 0.28;
+    this.player.vx = -this.player.facing * 180;
+    this.player.vy = -180;
+    this.camera.shake = 9;
     this.audio.hurt();
-    this.ui.flash("#ff304f");
-    this.screenShake = 8;
-    this.texts.push({ x: this.player.x, y: this.player.y - 22, text: `-${Math.round(damage)}`, color: "#ff657d", life: 0.7, critical: false });
-    if (this.player.hp <= 0) this.endRun();
+    this.ui.flash("#ff334b");
+    this.texts.push({ x: this.player.x, y: this.player.y - 25, text: `-${Math.round(reduced)}`, color: "#ff6370", life: 0.8, critical: false });
+    this.burst(this.player.x, this.player.y, "#e94b5b", 13, 160);
+    if (this.player.hp <= 0) this.die();
   }
 
-  private gainXp(amount: number): void {
-    this.player.xp += amount;
-    while (this.player.xp >= this.player.xpNeeded) {
-      this.player.xp -= this.player.xpNeeded;
-      this.player.level += 1;
-      this.player.xpNeeded = Math.round(this.player.xpNeeded * 1.28);
-      this.audio.level();
-      this.presentLevelChoices();
-      break;
-    }
+  private die(): void {
+    this.player.hp = 0;
+    this.running = false;
+    this.audio.setBossMode(false);
+    this.persist();
+    const depth = Math.max(0, Math.floor(this.player.y / TILE) - this.world.surfaceAt(Math.floor(this.player.x / TILE)));
+    this.ui.showDeath([
+      `STAGE ${String(this.save.stage).padStart(2, "0")}`,
+      `DEEPEST POINT ${depth}m`,
+      `◆ ${this.save.gold} GOLD RETAINED`,
+      `${this.save.equipment.length} RELICS FOUND`,
+    ]);
   }
 
-  private presentLevelChoices(): void {
-    this.paused = true;
-    const available = upgrades.filter((upgrade) => (this.upgradeStacks.get(upgrade.id) ?? 0) < upgrade.maxStacks);
-    const choices = this.random.shuffle([...available]).slice(0, 3).map((upgrade) => this.upgradeChoice(upgrade));
-    this.ui.showChoices("ARCANE ASCENSION", `LEVEL ${this.player.level} — CHOOSE A POWER`, choices);
+  private checkInteractions(): void {
+    const chest = this.nearChest();
+    const merchant = this.nearMerchant();
+    if (chest) this.ui.setInteraction(chest.locked ? "UNLOCK TREASURE CHEST" : "OPEN TREASURE CHEST");
+    else if (merchant) this.ui.setInteraction("TRADE WITH ORIN");
+    else this.ui.setInteraction();
+    if (!pressed.has("KeyE") && !(this.gamepadInteract && !this.previousGamepadInteract)) return;
+    if (chest) this.openChest(chest);
+    else if (merchant) this.openMerchant();
   }
 
-  private upgradeChoice(upgrade: Upgrade): ChoiceOption {
-    return {
-      name: upgrade.name,
-      description: upgrade.description,
-      icon: upgrade.icon,
-      rarity: upgrade.rarity,
-      tag: `LEVEL ${(this.upgradeStacks.get(upgrade.id) ?? 0) + 1}/${upgrade.maxStacks}`,
-      select: () => {
-        upgrade.apply(this);
-        const stacks = (this.upgradeStacks.get(upgrade.id) ?? 0) + 1;
-        this.upgradeStacks.set(upgrade.id, stacks);
-        if (upgrade.id === "shield") {
-          this.player.shieldMax = this.player.shield;
-          this.player.shieldRegen = 0;
-        }
-        this.paused = false;
-        this.ui.toast(`${upgrade.name} acquired`, rarityColors[upgrade.rarity]);
-      },
-    };
+  private nearChest(): ChunkChest | undefined {
+    return this.world.nearestChest(this.player.x, this.player.y, 52);
   }
 
-  private checkInteraction(): void {
-    this.nearestChest = this.chests
-      .filter((chest) => !chest.opened && Math.hypot(chest.x - this.player.x, chest.y - this.player.y) < 64)
-      .sort((a, b) => Math.hypot(a.x - this.player.x, a.y - this.player.y) - Math.hypot(b.x - this.player.x, b.y - this.player.y))[0] ?? null;
-    this.nearestFeature = this.features
-      .filter((feature) => (!feature.used || feature.type === "merchant") && Math.hypot(feature.x - this.player.x, feature.y - this.player.y) < 68)
-      .sort((a, b) => Math.hypot(a.x - this.player.x, a.y - this.player.y) - Math.hypot(b.x - this.player.x, b.y - this.player.y))[0] ?? null;
-    const label = this.nearestChest
-      ? this.nearestChest.locked ? `UNLOCK CHEST · ${this.keys} KEY${this.keys === 1 ? "" : "S"}` : this.nearestChest.secret ? "OPEN SECRET CACHE" : "OPEN CHEST"
-      : this.nearestFeature?.type === "merchant" ? "TRADE WITH MERCHANT"
-        : this.nearestFeature?.type === "fountain" ? "DRINK FROM FOUNTAIN"
-          : this.nearestFeature?.type === "puzzle" ? "INSPECT ANCIENT SIGILS" : undefined;
-    this.ui.setInteraction(Boolean(this.nearestChest || this.nearestFeature), label);
+  private nearMerchant(): boolean {
+    return this.merchant.available && Math.hypot(this.player.x - this.merchant.x, this.player.y - this.merchant.y) < 68;
   }
 
-  private openChest(chest: Chest): void {
+  private openChest(chest: ChunkChest): void {
     if (chest.opened || this.paused) return;
-    if (chest.locked && this.keys <= 0) {
-      this.ui.toast("A labyrinth key is required", "#f05a62");
-      this.audio.hurt();
+    if (chest.locked && this.save.keys < 1) {
+      this.ui.toast("A vault key is needed to break the seal", "#ff6571");
       return;
     }
-    if (chest.locked) this.keys -= 1;
-    chest.opened = true;
+    if (chest.locked) this.save.keys -= 1;
+    this.world.openChest(chest, this.save);
     this.paused = true;
-    this.save.gold += 10 + this.stage.floor * 2;
-    this.persistSave();
     this.audio.chest();
-    for (let i = 0; i < 28; i += 1) this.addParticle(chest.x, chest.y, chest.secret ? "#d278ff" : "#ffd36b", 4, 190);
-    this.player.ultimateCharge = Math.min(100, this.player.ultimateCharge + 15);
-    const upgradePool = this.random.shuffle([...upgrades]).filter(
-      (upgrade) => (this.upgradeStacks.get(upgrade.id) ?? 0) < upgrade.maxStacks,
-    );
-    const options = this.random.shuffle<ChoiceOption>([
-      this.upgradeChoice(upgradePool[0]),
-      this.upgradeChoice(upgradePool[1]),
-      this.equipmentChoice(this.generateEquipment(chest.secret || chest.locked ? 2 : 0)),
-      this.goldChoice(chest.secret || chest.locked),
-      this.keyChoice(),
+    this.burst(chest.x, chest.y, rarityColors[chest.rarity], 35, 220);
+    const pool = [
+      this.equipmentChoice(this.generateEquipment(rarityOrder.indexOf(chest.rarity) >= 3 ? 2 : 0)),
+      this.goldChoice(chest.rarity),
       this.stoneChoice(),
-      this.healingChoice(),
-    ]).slice(0, 3).map((option) => ({
-      ...option,
-      select: () => {
-        option.select();
-        this.gainXp(18 + this.stage.floor * 2);
-      },
-    }));
-    this.ui.showChoices(chest.secret ? "SECRET CACHE DISCOVERED" : "TREASURE FOUND", "CHOOSE YOUR REWARD", options);
+      this.keyChoice(),
+      this.potionChoice(),
+      this.skillChoice(),
+      this.passiveChoice(),
+      this.equipmentChoice(this.generateEquipment(1)),
+    ];
+    const choices = this.random.shuffle(pool).slice(0, 3);
+    this.ui.showChoices("TREASURE RECOVERED", "Choose one relic", choices);
   }
 
-  private goldChoice(valuable: boolean): ChoiceOption {
-    const gold = (valuable ? 90 : 50) + this.stage.floor * 14;
+  private equipmentChoice(item: Equipment): RewardChoice {
     return {
-      name: "Gilded Hoard",
-      description: `Take ${gold} gold from the forgotten treasury`,
+      name: item.name,
+      description: `${item.slot} · ${this.describeStats(item)}${item.effect ? ` · ${item.effect}` : ""}`,
+      icon: item.icon,
+      rarity: item.rarity,
+      tag: `${item.rarity.toUpperCase()} EQUIPMENT`,
+      choose: () => {
+        this.acquireEquipment(item);
+        this.finishChoice(`${item.name} equipped`, rarityColors[item.rarity]);
+      },
+    };
+  }
+
+  private goldChoice(rarity: Rarity): RewardChoice {
+    const amount = 70 + this.save.stage * 18 + rarityOrder.indexOf(rarity) * 35;
+    return {
+      name: "Royal Gold Cache",
+      description: `Recover ${amount} gold from the old kingdoms`,
       icon: "◆",
-      rarity: valuable ? "Epic" : "Rare",
+      rarity,
       tag: "CURRENCY",
-      select: () => {
-        this.save.gold += gold;
-        this.persistSave();
-        this.paused = false;
-        this.ui.toast(`+${gold} gold`, "#f3bd58");
+      choose: () => {
+        this.save.gold += amount;
+        this.finishChoice(`+${amount} gold`, "#e8b95c");
       },
     };
   }
 
-  private keyChoice(): ChoiceOption {
+  private stoneChoice(): RewardChoice {
     return {
-      name: "Labyrinth Key",
-      description: "Opens one sealed treasure chamber",
-      icon: "⚿",
-      rarity: "Rare",
-      tag: "KEY ITEM",
-      select: () => {
-        this.keys += 1;
-        this.paused = false;
-        this.ui.toast("Labyrinth key acquired", "#f3bd58");
-      },
-    };
-  }
-
-  private stoneChoice(): ChoiceOption {
-    const stones = 1 + Math.floor(this.stage.floor / 7);
-    return {
-      name: "Upgrade Stone",
-      description: `Gain ${stones} stone${stones === 1 ? "" : "s"} for the forge`,
+      name: "Runesmith Stone",
+      description: "Upgrade equipment or purchase permanent power",
       icon: "⬡",
       rarity: "Epic",
-      tag: "CRAFTING MATERIAL",
-      select: () => {
-        this.save.stones += stones;
-        this.persistSave();
-        this.paused = false;
-        this.ui.toast(`+${stones} upgrade stone${stones === 1 ? "" : "s"}`, "#b76cff");
+      tag: "UPGRADE MATERIAL",
+      choose: () => {
+        this.save.stones += 1;
+        this.finishChoice("+1 upgrade stone", "#b86cff");
       },
     };
   }
 
-  private healingChoice(): ChoiceOption {
+  private keyChoice(): RewardChoice {
     return {
-      name: "Fountain Essence",
-      description: "Fully restore health and gain an extra potion",
-      icon: "♥",
-      rarity: "Common",
-      tag: "RESTORATION",
-      select: () => {
-        this.player.hp = this.player.maxHp;
-        this.player.potionCharges += 1;
-        this.paused = false;
-        this.ui.toast("Vitality restored", "#68d5a4");
+      name: "Sunken Vault Key",
+      description: "Opens one sealed treasure chest",
+      icon: "⚿",
+      rarity: "Rare",
+      tag: "EXPLORATION KEY",
+      choose: () => {
+        this.save.keys += 1;
+        this.finishChoice("+1 vault key", "#efcc73");
       },
     };
   }
 
-  private interactFeature(feature: WorldFeature): void {
-    if (this.paused || (feature.used && feature.type !== "merchant")) return;
-    if (feature.type === "merchant") {
-      this.openMerchant();
-      return;
-    }
-    if (feature.type === "fountain") {
-      feature.used = true;
-      this.player.hp = this.player.maxHp;
-      this.player.potionCharges += 1;
-      this.audio.level();
-      this.ui.toast("The golden water restores body and spirit", "#65f1d0");
-      return;
-    }
-    feature.used = true;
-    this.paused = true;
-    const correct = this.random.int(0, 2);
-    const sigils = ["SIGIL OF DAWN", "SIGIL OF ASH", "SIGIL OF ECHOES"];
-    const choices = sigils.map((name, index): ChoiceOption => ({
-      name,
-      description: index === correct ? "The stone hums with a hidden resonance" : "Its meaning has been lost to time",
-      icon: ["☀", "♨", "◇"][index],
-      rarity: index === correct ? "Legendary" : "Common",
-      tag: "ANCIENT RUNE",
-      select: () => {
-        this.paused = false;
-        if (index === correct) {
-          this.keys += 1;
-          this.save.gold += 75 + this.stage.floor * 8;
-          this.persistSave();
-          this.gainXp(25);
-          this.audio.level();
-          this.ui.toast("The sigils yield a key and hidden gold", "#f3bd58");
-        } else {
-          this.damagePlayer(10 + this.stage.floor);
-          this.ui.toast("The false sigil answers with a curse", "#f05a62");
-        }
+  private potionChoice(): RewardChoice {
+    return {
+      name: "Crimson Tonic",
+      description: "Gain two potions and restore all health",
+      icon: "♥",
+      rarity: "Rare",
+      tag: "RESTORATION",
+      choose: () => {
+        this.player.potions += 2;
+        this.player.hp = this.player.maxHp;
+        this.finishChoice("Health restored", "#64dc9c");
       },
-    }));
-    this.ui.showChoices("ANCIENT PUZZLE", "CHOOSE THE TRUE SIGIL", choices);
+    };
+  }
+
+  private skillChoice(): RewardChoice {
+    const names = ["Fireball", "Ice Spear", "Chain Lightning", "Meteor Core", "Dash Slash", "Time Fracture"];
+    const name = this.random.pick(names);
+    return {
+      name,
+      description: "+20% skill damage and +12 maximum mana",
+      icon: "✦",
+      rarity: "Legendary",
+      tag: "ACTIVE SKILL",
+      choose: () => {
+        this.player.attack *= 1.2;
+        this.player.maxMana += 12;
+        this.player.mana = this.player.maxMana;
+        this.finishChoice(`${name} mastered`, "#ffb84d");
+      },
+    };
+  }
+
+  private passiveChoice(): RewardChoice {
+    const options = [
+      { name: "Miner's Rhythm", text: "+18% mining speed", apply: () => { this.player.mining *= 1.18; } },
+      { name: "Windstep", text: "+12% movement speed", apply: () => { this.player.speed *= 1.12; } },
+      { name: "Stoneblood", text: "+30 maximum health", apply: () => { this.player.maxHp += 30; this.player.hp += 30; } },
+      { name: "Keen Edge", text: "+6% critical chance", apply: () => { this.player.crit += 0.06; } },
+    ];
+    const option = this.random.pick(options);
+    return {
+      name: option.name,
+      description: option.text,
+      icon: "☀",
+      rarity: "Mythic",
+      tag: "PASSIVE ABILITY",
+      choose: () => {
+        option.apply();
+        this.finishChoice(`${option.name} awakened`, "#ff5f7e");
+      },
+    };
+  }
+
+  private finishChoice(message: string, color: string): void {
+    this.paused = false;
+    this.gainXp(28 + this.save.stage * 3);
+    this.persist();
+    this.ui.toast(message, color);
   }
 
   private openMerchant(): void {
     this.paused = true;
     const offers: MerchantOffer[] = [];
-    const addOffer = (
-      name: string,
-      description: string,
-      icon: string,
-      rarity: Rarity,
-      cost: number,
-      action: () => void,
-    ): void => {
+    const add = (name: string, description: string, icon: string, rarity: Rarity, price: number, action: () => void): void => {
       const offer: MerchantOffer = {
-        name,
-        description,
-        icon,
-        rarity,
-        cost,
-        sold: false,
+        name, description, icon, rarity, price, sold: false,
         buy: () => {
-          if (offer.sold || this.save.gold < cost) {
-            this.ui.toast(offer.sold ? "Already purchased" : `Need ${cost} gold`, "#f05a62");
+          if (offer.sold || this.save.gold < price) {
+            this.ui.toast(offer.sold ? "Already purchased" : `Need ${price} gold`, "#ff6571");
             return false;
           }
-          this.save.gold -= cost;
+          this.save.gold -= price;
           offer.sold = true;
           action();
-          this.persistSave();
-          this.audio.chest();
+          this.audio.buy();
+          this.persist();
           return true;
         },
       };
       offers.push(offer);
     };
-    const equipment = this.generateEquipment(1);
-    addOffer(equipment.name, `${equipment.slot} · ${this.describeStats(equipment)}`, equipment.icon, equipment.rarity, 110 + this.stage.floor * 12, () => this.acquireEquipment(equipment));
-    addOffer("Restorative Draught", "Fully restore health and gain one potion", "♥", "Common", 55 + this.stage.floor * 3, () => {
-      this.player.hp = this.player.maxHp;
-      this.player.potionCharges += 1;
+    const weapon = this.generateEquipment(1, "Weapon");
+    const armor = this.generateEquipment(1, "Armor");
+    const artifact = this.generateEquipment(2, "Artifact");
+    add(weapon.name, this.describeStats(weapon), weapon.icon, weapon.rarity, 120 + this.save.stage * 18, () => this.acquireEquipment(weapon));
+    add(armor.name, this.describeStats(armor), armor.icon, armor.rarity, 110 + this.save.stage * 17, () => this.acquireEquipment(armor));
+    add("Deepwell Elixir", "Three potions and full restoration", "♥", "Rare", 85 + this.save.stage * 5, () => { this.player.potions += 3; this.player.hp = this.player.maxHp; });
+    add("Runesmith Bundle", "Two upgrade stones", "⬡", "Epic", 190 + this.save.stage * 11, () => { this.save.stones += 2; });
+    add("Ancient Vault Key", "Opens one sealed treasure chest", "⚿", "Rare", 95 + this.save.stage * 4, () => { this.save.keys += 1; });
+    add(artifact.name, this.describeStats(artifact), artifact.icon, artifact.rarity, 290 + this.save.stage * 24, () => this.acquireEquipment(artifact));
+    add("Permanent Delver's Mark", "+1 movement and mining power forever", "☀", "Mythic", 480 + this.save.stage * 32, () => {
+      this.save.permanent.speed += 1;
+      this.save.permanent.mining += 1;
+      this.player.speed += 3;
+      this.player.mining += 0.04;
     });
-    addOffer("Runesmith's Stone", "Two upgrade stones for the forge", "⬡", "Epic", 120 + this.stage.floor * 8, () => { this.save.stones += 2; });
-    const legendary = this.generateEquipment(4);
-    legendary.rarity = "Legendary";
-    addOffer("Legendary Reliquary", `Contains ${legendary.name}`, "✦", "Legendary", 280 + this.stage.floor * 20, () => this.acquireEquipment(legendary));
-    addOffer("Permanent Might", "+1 permanent power for every future descent", "☀", "Mythic", 450 + this.stage.floor * 30, () => { this.save.permanentPower += 1; });
-    this.ui.showMerchant(offers, this.save.gold, () => { this.paused = false; });
+    this.ui.showMerchant(offers, () => {
+      this.paused = false;
+    });
   }
 
-  private collectKeys(): void {
-    for (const key of this.keyPickups) {
-      if (key.collected || Math.hypot(key.x - this.player.x, key.y - this.player.y) > 28) continue;
-      key.collected = true;
-      this.keys += 1;
-      this.audio.chest();
-      this.ui.toast("Labyrinth key found", "#f3bd58");
-      for (let i = 0; i < 14; i += 1) this.addParticle(key.x, key.y, "#f3bd58", 3, 120);
-    }
-  }
-
-  private equipmentChoice(item: Equipment): ChoiceOption {
-    return {
-      name: item.name,
-      description: `${item.slot} · ${this.describeStats(item)}`,
-      icon: item.icon,
-      rarity: item.rarity,
-      tag: `${item.rarity.toUpperCase()} EQUIPMENT`,
-      select: () => {
-        this.acquireEquipment(item);
-        this.paused = false;
-        this.ui.toast(`${item.name} equipped`, rarityColors[item.rarity]);
-      },
-    };
-  }
-
-  private generateEquipment(rarityBonus = 0): Equipment {
-    const slot = this.random.pick(slots);
-    const roll = this.random.next() + this.stage.floor * 0.018 + rarityBonus * 0.12;
-    let rarityIndex = roll > 1.28 ? 5 : roll > 1.08 ? 4 : roll > 0.9 ? 3 : roll > 0.62 ? 2 : roll > 0.3 ? 1 : 0;
-    rarityIndex = Math.min(rarityOrder.length - 1, rarityIndex);
+  private generateEquipment(bonus = 0, forcedSlot?: EquipmentSlot): Equipment {
+    const slot = forcedSlot ?? this.random.pick(slots);
+    const roll = this.random.next() + this.save.stage * 0.018 + bonus * 0.13;
+    const rarityIndex = roll > 1.3 ? 5 : roll > 1.1 ? 4 : roll > 0.88 ? 3 : roll > 0.6 ? 2 : roll > 0.28 ? 1 : 0;
     const rarity = rarityOrder[rarityIndex];
-    const multiplier = 1 + rarityIndex * 0.55 + this.stage.floor * 0.08;
+    const scale = 1 + rarityIndex * 0.48 + this.save.stage * 0.075;
     const stats: Equipment["stats"] = {};
-    if (slot === "Weapon") stats.attack = Math.round(7 * multiplier);
-    if (slot === "Helmet") { stats.maxHp = Math.round(10 * multiplier); stats.critChance = 0.01 * (rarityIndex + 1); }
-    if (slot === "Armor") { stats.defense = Math.round(3 * multiplier); stats.maxHp = Math.round(8 * multiplier); }
-    if (slot === "Boots") stats.moveSpeed = Math.round(8 * multiplier);
-    if (slot === "Ring") { stats.critChance = 0.018 * (rarityIndex + 1); stats.critDamage = 0.08 * (rarityIndex + 1); }
-    if (slot === "Amulet") { stats.lifeSteal = 0.008 * (rarityIndex + 1); stats.attack = Math.round(2 * multiplier); }
-    if (slot === "Artifact") { stats.elementDamage = Math.round(3 * multiplier); stats.cooldownReduction = 0.015 * (rarityIndex + 1); }
-    const names = itemNames[slot];
+    if (slot === "Weapon") stats.attack = Math.round(7 * scale);
+    if (slot === "Helmet") { stats.hp = Math.round(11 * scale); stats.crit = 0.008 * (rarityIndex + 1); }
+    if (slot === "Armor") { stats.defense = Math.round(3 * scale); stats.hp = Math.round(7 * scale); }
+    if (slot === "Boots") stats.speed = Math.round(5 * scale);
+    if (slot === "Ring") { stats.crit = 0.014 * (rarityIndex + 1); stats.attack = Math.round(scale * 2); }
+    if (slot === "Amulet") { stats.mana = Math.round(8 * scale); stats.cooldown = 0.012 * (rarityIndex + 1); }
+    if (slot === "Artifact") { stats.mining = 0.08 * (rarityIndex + 1); stats.attack = Math.round(2.5 * scale); }
+    if (slot === "Pet") { stats.speed = Math.round(2.5 * scale); stats.defense = Math.round(scale); }
     return {
-      id: `${Date.now()}-${Math.floor(this.random.next() * 1e8)}`,
-      name: this.random.pick(names),
+      id: `${Date.now()}-${Math.floor(this.random.next() * 1e9)}`,
+      name: this.random.pick(equipmentNames[slot]),
       slot,
       rarity,
-      level: 0,
+      level: 1,
       icon: slotIcons[slot],
       stats,
-      effect: rarityIndex >= 3 ? ["Burning attacks", "Frozen retaliation", "Echoing strikes", "Guardian spirit"][rarityIndex % 4] : undefined,
+      effect: rarityIndex >= 3 ? this.random.pick(["Emberwake", "Crystal Echo", "Abyss Ward", "Goldfinder", "Timebend"]) : undefined,
     };
   }
 
@@ -1228,397 +1150,602 @@ export class Game {
     this.save.equipment.push(item);
     this.save.equipped[item.slot] = item.id;
     this.equipped.set(item.slot, item);
+    const oldRatio = this.player.hp / this.player.maxHp;
     const stats = this.computedStats();
-    const hpRatio = this.player.hp / this.player.maxHp;
-    this.player.maxHp = stats.maxHp;
-    this.player.hp = Math.min(this.player.maxHp, Math.max(1, this.player.maxHp * hpRatio));
+    this.player.maxHp = stats.hp;
+    this.player.hp = Math.max(1, this.player.maxHp * oldRatio);
+    this.player.maxMana = stats.mana;
+    this.player.mana = Math.min(this.player.mana, this.player.maxMana);
     this.player.attack = stats.attack;
-    this.player.defense = stats.defense;
-    this.player.speed = stats.moveSpeed;
-    this.player.attackSpeed = stats.attackSpeed;
-    this.player.critChance = stats.critChance;
-    this.player.critDamage = stats.critDamage;
-    this.player.lifeSteal = stats.lifeSteal;
-    this.persistSave();
+    this.player.armor = stats.defense;
+    this.player.speed = stats.speed;
+    this.player.mining = stats.mining;
+    this.player.crit = stats.crit;
   }
 
-  private updateTraps(): void {
-    const cell = this.worldToCell(this.player.x, this.player.y);
-    const current = this.maze.cells[cell.y]?.[cell.x];
-    if (!current || current.room !== "trap") return;
-    const key = `${cell.x}:${cell.y}`;
-    if (this.visitedTraps.has(key)) return;
-    this.visitedTraps.add(key);
-    this.damagePlayer(12 + this.stage.floor * 2);
-    this.ui.toast("A hidden rune erupts beneath you", "#ff775f");
-    for (let i = 0; i < 18; i += 1) this.addParticle(this.player.x, this.player.y, "#ff633f", 4, 160);
+  private gainXp(amount: number): void {
+    this.player.xp += amount;
+    if (this.player.xp < this.player.xpNext) return;
+    this.player.xp -= this.player.xpNext;
+    this.player.level += 1;
+    this.player.xpNext = Math.round(this.player.xpNext * 1.34);
+    this.player.maxHp += 8;
+    this.player.hp = this.player.maxHp;
+    this.player.attack += 2;
+    this.audio.level();
+    this.ui.toast(`Level ${this.player.level} · power increased`, "#8cf4da");
+  }
+
+  private computedStats(): { attack: number; defense: number; hp: number; speed: number; crit: number; mining: number; mana: number } {
+    const result = {
+      attack: 16 + this.save.permanent.attack * 1.5,
+      defense: 2 + this.save.permanent.defense,
+      hp: 115 + this.save.permanent.hp * 7,
+      speed: 210 + this.save.permanent.speed * 3,
+      crit: 0.06 + this.save.permanent.crit * 0.006,
+      mining: 1 + this.save.permanent.mining * 0.04,
+      mana: 80,
+    };
+    this.equipped.forEach((item) => {
+      const scale = 1 + item.level * 0.08;
+      if (item.stats.attack) result.attack += item.stats.attack * scale;
+      if (item.stats.defense) result.defense += item.stats.defense * scale;
+      if (item.stats.hp) result.hp += item.stats.hp * scale;
+      if (item.stats.speed) result.speed += item.stats.speed * scale;
+      if (item.stats.crit) result.crit += item.stats.crit * scale;
+      if (item.stats.mining) result.mining += item.stats.mining * scale;
+      if (item.stats.mana) result.mana += item.stats.mana * scale;
+    });
+    return result;
+  }
+
+  private describeStats(item: Equipment): string {
+    const labels: Record<string, string> = { attack: "ATK", defense: "DEF", hp: "HP", speed: "SPEED", crit: "CRIT", mining: "MINING", mana: "MANA", cooldown: "COOLDOWN" };
+    return Object.entries(item.stats).map(([key, value]) => `+${value < 1 ? Math.round(value * 100) + "%" : Math.round(value)} ${labels[key]}`).join(" · ");
+  }
+
+  private updatePlayerAnimation(move: number, sprinting: boolean): void {
+    let animation = "idle";
+    if (this.player.attackTime > 0) animation = this.player.grounded ? "attack" : "airAttack";
+    else if (this.player.rollTime > 0) animation = "roll";
+    else if (this.player.dashTime > 0) animation = "dash";
+    else if (this.player.onLadder && Math.abs(this.player.vy) > 5) animation = "climb";
+    else if (!this.player.grounded && this.player.onWall !== 0 && this.player.vy === 0) animation = "ledge";
+    else if (!this.player.grounded && this.player.onWall !== 0 && this.player.vy > 0) animation = "wallSlide";
+    else if (!this.player.grounded && this.player.vy < -40) animation = this.player.jumps > 1 ? "doubleJump" : "jump";
+    else if (!this.player.grounded && this.player.vy > 60) animation = "fall";
+    else if (Math.abs(move) > 0.1) animation = sprinting ? "sprint" : "run";
+    if (this.player.animation !== animation) {
+      this.player.animation = animation;
+      this.player.animationTime = 0;
+    } else {
+      this.player.animationTime += FIXED_STEP * (sprinting ? 11 : 8);
+    }
+  }
+
+  private updateCamera(dt: number): void {
+    const lookX = this.player.x + this.player.facing * Math.min(110, Math.abs(this.player.vx) * 0.22);
+    const lookY = this.player.y - 35 + clamp(this.player.vy * 0.08, -45, 70);
+    this.camera.x += (lookX - this.camera.x) * Math.min(1, dt * 5.8);
+    this.camera.y += (lookY - this.camera.y) * Math.min(1, dt * 5.2);
   }
 
   private updateParticles(dt: number): void {
     for (const particle of this.particles) {
+      if (!particle.active) continue;
       particle.life -= dt;
+      if (particle.life <= 0) {
+        particle.active = false;
+        continue;
+      }
       particle.x += particle.vx * dt;
       particle.y += particle.vy * dt;
-      particle.vx *= 0.97;
-      particle.vy *= 0.97;
+      particle.vy += 210 * dt;
+      particle.vx *= 0.985;
     }
     for (const text of this.texts) {
       text.life -= dt;
-      text.y -= 36 * dt;
+      text.y -= dt * 38;
     }
-    while (this.particles.length > 650) this.particles.shift();
-    while (this.texts.length > 80) this.texts.shift();
+    this.texts = this.texts.filter((text) => text.life > 0);
   }
 
-  private completeStage(): void {
-    if (this.bossDefeated) return;
-    this.bossDefeated = true;
-    this.paused = true;
-    this.audio.setBossMode(false);
-    this.audio.victory();
-    const gold = 160 + this.stage.floor * 45;
-    const stones = 2 + Math.ceil(this.stage.floor / 3);
-    const crystals = this.stage.floor >= 5 ? Math.ceil(this.stage.floor / 5) : 0;
-    this.save.gold += gold;
-    this.save.stones += stones;
-    this.save.crystals += crystals;
-    this.save.unlockedFloor = Math.max(this.save.unlockedFloor, Math.min(20, this.stage.floor + 1));
-    this.save.selectedFloor = Math.min(20, this.stage.floor + 1);
-    this.save.permanentPower += 1;
-    const bossItem = this.generateEquipment(2);
-    const rareItem = this.generateEquipment(1);
-    if (rarityOrder.indexOf(rareItem.rarity) < rarityOrder.indexOf("Rare")) rareItem.rarity = "Rare";
-    this.acquireEquipment(bossItem);
-    this.acquireEquipment(rareItem);
-    this.persistSave();
-    this.arenaLocked = false;
-    const rewards = [
-      `◆ ${gold} GOLD`,
-      `⬡ ${stones} UPGRADE STONES`,
-      `${bossItem.icon} ${bossItem.name}`,
-      `${rareItem.icon} ${rareItem.name}`,
-      `☀ +1 PERMANENT POWER`,
-    ];
-    window.setTimeout(() => {
-      this.ui.showStageComplete(
-        this.stage.floor === 20 ? "THE ETERNAL MAZE CONQUERED" : `FLOOR ${String(this.stage.floor).padStart(2, "0")} CLEARED`,
-        rewards,
-      );
-    }, 800);
+  private particle(x: number, y: number, vx: number, vy: number, life: number, size: number, color: string, glow: number): void {
+    const existing = this.particles.find((particle) => !particle.active);
+    const data: Particle = { active: true, x, y, vx, vy, life, maxLife: life, size, color, glow };
+    if (existing) Object.assign(existing, data);
+    else if (this.particles.length < 900) this.particles.push(data);
   }
 
-  private endRun(): void {
-    this.gameOver = true;
-    this.paused = true;
-    this.persistSave();
-    this.ui.showGameOver(
-      `Reached Floor ${this.stage.floor} · Level ${this.player.level} · ${Math.floor(this.elapsed)}s survived · ${this.save.gold} total gold`,
-    );
+  private burst(x: number, y: number, color: string, count: number, speed: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const velocity = speed * (0.2 + Math.random() * 0.8);
+      this.particle(x, y, Math.cos(angle) * velocity, Math.sin(angle) * velocity, 0.25 + Math.random() * 0.55, 2 + Math.random() * 3, color, 8);
+    }
   }
 
-  private draw(): void {
+  private projectile(data: Omit<Projectile, "active">): void {
+    const existing = this.projectiles.find((projectile) => !projectile.active);
+    if (existing) Object.assign(existing, data, { active: true });
+    else this.projectiles.push({ ...data, active: true });
+  }
+
+  private pushHud(): void {
+    const tileX = Math.floor(this.player.x / TILE);
+    const tileY = Math.floor(this.player.y / TILE);
+    const biome = this.world.getBiomeAt(tileX, tileY);
+    this.audio.setBiome(biome.id);
+    const nearestChest = this.world.nearestChest(this.player.x, this.player.y);
+    const treasureDistance = nearestChest ? Math.round(Math.hypot(nearestChest.x - this.player.x, nearestChest.y - this.player.y) / TILE) : undefined;
+    const merchantDistance = Math.round(Math.hypot(this.merchant.x - this.player.x, this.merchant.y - this.player.y) / TILE);
+    const weapon = this.equipped.get("Weapon")?.name ?? "Delver Pick";
+    const depth = Math.max(0, tileY - this.world.surfaceAt(tileX));
+    const objective = this.boss
+      ? `Defeat ${this.boss.name}`
+      : this.stageTime <= 60 ? "Find Orin · prepare for the guardian" : "Mine ore · recover treasure · descend";
+    this.ui.updateHud({
+      hp: this.player.hp, maxHp: this.player.maxHp,
+      mana: this.player.mana, maxMana: this.player.maxMana,
+      xp: this.player.xp, xpNext: this.player.xpNext,
+      level: this.player.level, armor: Math.round(this.player.armor), weapon,
+      gold: this.save.gold, stage: this.save.stage, time: this.stageTime,
+      biome: biome.name, objective, bossWarning: !this.boss && this.stageTime <= 20,
+      boss: this.boss && !this.boss.dead ? { name: this.boss.name, hp: this.boss.hp, maxHp: this.boss.maxHp, phase: this.boss.phase } : undefined,
+      depth, treasureDistance, merchantDistance,
+      dash: this.player.dashCooldown / 1.05,
+      skill: this.player.skillCooldown / 2.8,
+      potions: this.player.potions,
+      ultimate: this.player.ultimate,
+      buffs: this.activeBuffs(),
+    });
+    this.ui.drawMinimap((context, width, height) => this.drawMinimap(context, width, height));
+  }
+
+  private activeBuffs(): string[] {
+    const buffs: string[] = [];
+    if (this.equipped.get("Artifact")) buffs.push("✦");
+    if (this.equipped.get("Pet")) buffs.push("◆");
+    if (this.player.invulnerable > 0) buffs.push("◇");
+    if (this.world.isLiquid(this.world.getTile(Math.floor(this.player.x / TILE), Math.floor(this.player.y / TILE)))) buffs.push("≈");
+    return buffs;
+  }
+
+  private draw(time: number): void {
     const ctx = this.context;
-    const width = this.canvas.width;
-    const height = this.canvas.height;
-    const shakeX = this.screenShake > 0 ? (Math.random() - 0.5) * this.screenShake : 0;
-    const shakeY = this.screenShake > 0 ? (Math.random() - 0.5) * this.screenShake : 0;
-    const introFocus = this.bossIntroTimer > 0 ? this.cellCenter(this.maze.boss) : this.player;
-    const introProgress = this.bossIntroTimer > 0 ? 1 - this.bossIntroTimer / 3.2 : 0;
-    const zoom = 1 + introProgress * 0.16;
-    const cameraX = introFocus.x - width / (2 * zoom);
-    const cameraY = introFocus.y - height / (2 * zoom);
-    ctx.fillStyle = "#070910";
-    ctx.fillRect(0, 0, width, height);
-
+    ctx.clearRect(0, 0, this.width, this.height);
+    const tileX = Math.floor(this.player.x / TILE);
+    const tileY = Math.floor(this.player.y / TILE);
+    const biome = this.world.getBiomeAt(tileX, tileY);
+    this.drawParallax(ctx, biome, time);
+    if (!this.running && this.save.seed === 0) return;
+    const shakeX = this.camera.shake > 0 ? (Math.random() - 0.5) * this.camera.shake : 0;
+    const shakeY = this.camera.shake > 0 ? (Math.random() - 0.5) * this.camera.shake : 0;
+    const introZoom = this.bossIntro > 0 ? 1 + (1 - this.bossIntro / 3.5) * 0.13 : 1;
+    const focusX = this.bossIntro > 0 && this.arena ? this.arena.center.x : this.camera.x;
+    const focusY = this.bossIntro > 0 && this.arena ? this.arena.center.y : this.camera.y;
     ctx.save();
-    ctx.translate(width / 2 + shakeX, height / 2 + shakeY);
-    ctx.scale(zoom, zoom);
-    ctx.translate(-introFocus.x, -introFocus.y);
-    this.drawMaze(cameraX, cameraY, width / zoom, height / zoom);
-    this.drawTraps();
-    this.drawFeatures();
-    this.drawKeys();
-    this.drawChests();
-    this.drawProjectiles();
-    this.drawEnemies();
-    this.drawPlayer();
-    this.drawParticles();
-    this.drawTexts();
+    ctx.translate(this.width / 2 + shakeX, this.height / 2 + shakeY);
+    ctx.scale(introZoom, introZoom);
+    ctx.translate(-focusX, -focusY);
+    this.drawWorld(ctx, biome, time);
+    this.drawMerchant(ctx, time);
+    this.drawHazards(ctx, time);
+    this.drawChests(ctx, time);
+    this.drawProjectiles(ctx);
+    this.drawBoss(ctx, time);
+    this.drawPlayer(ctx, time);
+    this.drawParticles(ctx);
     ctx.restore();
-
-    this.drawLighting();
-    if ((!this.bossSpawned && this.timeLeft < 20) || this.bossIntroTimer > 0) {
-      const danger = this.bossIntroTimer > 0 ? 0.36 : (20 - this.timeLeft) / 20 * 0.2;
-      ctx.fillStyle = `rgba(25, 0, 8, ${danger})`;
-      ctx.fillRect(0, 0, width, height);
-    }
+    this.drawLighting(biome, time);
+    this.drawScreenFog(biome, time);
   }
 
-  private drawMaze(cameraX: number, cameraY: number, width: number, height: number): void {
-    const ctx = this.context;
-    const startX = Math.max(0, Math.floor(cameraX / TILE_SIZE) - 1);
-    const startY = Math.max(0, Math.floor(cameraY / TILE_SIZE) - 1);
-    const endX = Math.min(this.maze.width, Math.ceil((cameraX + width) / TILE_SIZE) + 1);
-    const endY = Math.min(this.maze.height, Math.ceil((cameraY + height) / TILE_SIZE) + 1);
-    const [voidColor, floorColor, wallColor, accent] = this.stage.palette;
-
-    for (let y = startY; y < endY; y += 1) {
-      for (let x = startX; x < endX; x += 1) {
-        const cell = this.maze.cells[y][x];
-        const px = x * TILE_SIZE;
-        const py = y * TILE_SIZE;
-        if (cell.wall) {
-          ctx.fillStyle = voidColor;
-          ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-          const exposed = this.maze.cells[y + 1]?.[x] && !this.maze.cells[y + 1][x].wall;
-          if (exposed) {
-            ctx.fillStyle = wallColor;
-            ctx.fillRect(px, py + TILE_SIZE * 0.45, TILE_SIZE, TILE_SIZE * 0.55);
-            ctx.fillStyle = `${accent}22`;
-            ctx.fillRect(px + 3, py + TILE_SIZE * 0.48, TILE_SIZE - 6, 3);
-            ctx.fillStyle = "#090b12";
-            for (let brick = 0; brick < 3; brick += 1) {
-              ctx.fillRect(px + 4 + brick * 16 + (y % 2) * 5, py + 31 + (brick % 2) * 8, 10, 2);
-            }
-          }
-          continue;
-        }
-
-        const shade = cell.variant * 3;
-        ctx.fillStyle = this.shiftColor(floorColor, shade);
-        ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-        ctx.strokeStyle = `${accent}10`;
-        ctx.strokeRect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2);
-        ctx.fillStyle = "#05070b33";
-        if (cell.variant === 0) ctx.fillRect(px + 9, py + 13, 3, 2);
-        if (cell.variant === 1) ctx.fillRect(px + 31, py + 32, 5, 2);
-        if (cell.room === "boss") {
-          ctx.strokeStyle = `${accent}66`;
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.arc(px + 24, py + 24, 17 + Math.sin(this.elapsed * 2) * 2, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        if (cell.room === "secret") {
-          ctx.fillStyle = `${accent}24`;
-          ctx.fillRect(px + 5, py + 5, TILE_SIZE - 10, TILE_SIZE - 10);
-        }
-      }
-    }
-  }
-
-  private drawTraps(): void {
-    const ctx = this.context;
-    for (const point of this.maze.traps) {
-      const key = `${point.x}:${point.y}`;
-      if (!this.maze.cells[point.y][point.x].discovered && !this.visitedTraps.has(key)) continue;
-      const center = this.cellCenter(point);
-      ctx.save();
-      ctx.translate(center.x, center.y);
-      ctx.strokeStyle = this.visitedTraps.has(key) ? "#9a3c36" : "#6d4e45";
-      ctx.lineWidth = 2;
-      ctx.rotate(Math.PI / 4);
-      ctx.strokeRect(-9, -9, 18, 18);
-      ctx.fillStyle = this.visitedTraps.has(key) ? "#ff6845" : "#9d795d";
-      ctx.fillRect(-3, -3, 6, 6);
-      ctx.restore();
-    }
-  }
-
-  private drawFeatures(): void {
-    const ctx = this.context;
-    for (const feature of this.features) {
-      feature.pulse += 0.02;
-      if (feature.used && feature.type !== "merchant") continue;
-      ctx.save();
-      ctx.translate(feature.x, feature.y + Math.sin(feature.pulse * 2) * 2);
-      if (feature.type === "merchant") {
-        ctx.shadowBlur = 18;
-        ctx.shadowColor = "#f3bd58";
-        const sprite = this.sprites.get(91);
-        if (sprite?.complete && sprite.naturalWidth > 0) ctx.drawImage(sprite, -22, -26, 44, 44);
-        ctx.fillStyle = "#f3bd58";
-        ctx.fillRect(-14, 18, 28, 3);
-        ctx.fillStyle = "#fff0b3";
-        ctx.font = "bold 9px monospace";
-        ctx.textAlign = "center";
-        ctx.fillText("MERCHANT", 0, 33);
-      } else if (feature.type === "fountain") {
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = "#65e6d5";
-        ctx.fillStyle = "#7d8c95";
-        ctx.fillRect(-18, 7, 36, 10);
-        ctx.fillStyle = "#c9a95d";
-        ctx.fillRect(-13, -3, 26, 12);
-        ctx.fillStyle = "#63dfd1";
-        ctx.beginPath();
-        ctx.ellipse(0, -3, 11, 5, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#b9fff3";
-        ctx.fillRect(-2, -17, 4, 14);
-      } else {
-        ctx.rotate(Math.PI / 4);
-        ctx.fillStyle = "#1a1721";
-        ctx.strokeStyle = "#b999e8";
-        ctx.lineWidth = 2;
-        ctx.fillRect(-14, -14, 28, 28);
-        ctx.strokeRect(-14, -14, 28, 28);
-        ctx.rotate(-Math.PI / 4);
-        ctx.fillStyle = "#d9baff";
-        ctx.font = "22px Georgia";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("◇", 0, 0);
-      }
-      ctx.restore();
-    }
-  }
-
-  private drawKeys(): void {
-    const ctx = this.context;
-    for (const key of this.keyPickups) {
-      if (key.collected) continue;
-      key.pulse += 0.03;
-      ctx.save();
-      ctx.translate(key.x, key.y + Math.sin(key.pulse * 3) * 4);
-      ctx.shadowBlur = 16;
-      ctx.shadowColor = "#f3bd58";
-      ctx.fillStyle = "#f3bd58";
+  private drawParallax(ctx: CanvasRenderingContext2D, biome: Biome, time: number): void {
+    const gradient = ctx.createLinearGradient(0, 0, 0, this.height);
+    gradient.addColorStop(0, biome.sky);
+    gradient.addColorStop(1, "#030408");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, this.width, this.height);
+    const layers = [
+      { color: biome.far, speed: 0.05, baseline: 0.52, amplitude: 55 },
+      { color: biome.mid, speed: 0.1, baseline: 0.63, amplitude: 70 },
+      { color: biome.near, speed: 0.18, baseline: 0.75, amplitude: 85 },
+      { color: this.shiftColor(biome.near, -18), speed: 0.28, baseline: 0.88, amplitude: 70 },
+      { color: "#05060a", speed: 0.4, baseline: 0.98, amplitude: 45 },
+    ];
+    for (let layer = 0; layer < layers.length; layer += 1) {
+      const entry = layers[layer];
+      const offset = -this.camera.x * entry.speed;
+      ctx.fillStyle = entry.color;
       ctx.beginPath();
-      ctx.arc(-6, 0, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = this.stage.palette[1];
-      ctx.beginPath();
-      ctx.arc(-6, 0, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#f3bd58";
-      ctx.fillRect(0, -2, 14, 4);
-      ctx.fillRect(8, 2, 3, 5);
-      ctx.fillRect(13, 2, 3, 5);
-      ctx.restore();
-    }
-  }
-
-  private drawChests(): void {
-    const ctx = this.context;
-    for (const chest of this.chests) {
-      if (chest.opened) continue;
-      chest.pulse += 0.02;
-      const glow = 8 + Math.sin(chest.pulse * 2) * 3;
-      ctx.save();
-      ctx.shadowBlur = glow;
-      ctx.shadowColor = chest.secret ? "#b85eff" : chest.locked ? "#ff8e3d" : "#ffd05b";
-      const sprite = this.sprites.get(16);
-      if (sprite?.complete && sprite.naturalWidth > 0) {
-        ctx.drawImage(sprite, chest.x - 18, chest.y - 20, 36, 36);
-      } else {
-        ctx.fillStyle = chest.secret ? "#7c48a8" : "#9c6030";
-        ctx.fillRect(chest.x - 15, chest.y - 10, 30, 20);
-        ctx.fillStyle = chest.secret ? "#d08bff" : "#ffd56a";
-        ctx.fillRect(chest.x - 15, chest.y - 13, 30, 8);
-        ctx.fillRect(chest.x - 3, chest.y - 13, 6, 23);
+      ctx.moveTo(0, this.height);
+      for (let x = -80; x <= this.width + 80; x += 38) {
+        const world = x + offset;
+        const y = this.height * entry.baseline +
+          Math.sin(world * 0.012 + layer) * entry.amplitude * 0.32 +
+          Math.sin(world * 0.027 + time * 0.04) * entry.amplitude * 0.19;
+        ctx.lineTo(x, y);
       }
-      if (chest.locked) {
-        ctx.fillStyle = "#f3bd58";
-        ctx.fillRect(chest.x - 3, chest.y - 7, 6, 8);
-        ctx.strokeStyle = "#f3bd58";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(chest.x, chest.y - 8, 6, Math.PI, 0);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-  }
-
-  private drawEnemies(): void {
-    const ctx = this.context;
-    for (const enemy of this.enemies) {
-      if (enemy.dead) continue;
-      const bob = Math.sin(this.elapsed * 6 + enemy.id) * 2;
-      ctx.save();
-      ctx.translate(enemy.x, enemy.y + bob);
-      if (enemy.elite) {
-        ctx.strokeStyle = enemy.boss ? "#ffce66" : "#c36cff";
-        ctx.lineWidth = enemy.boss ? 4 : 2;
-        ctx.beginPath();
-        ctx.arc(0, 0, enemy.radius + 7 + Math.sin(this.elapsed * 4) * 2, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.shadowBlur = enemy.boss ? 22 : enemy.elite ? 12 : 5;
-      ctx.shadowColor = enemy.kind.color;
-      if (enemy.hitFlash > 0) ctx.globalCompositeOperation = "screen";
-      const sprite = this.sprites.get(enemy.kind.sprite);
-      const size = enemy.radius * 2.8;
-      if (sprite?.complete && sprite.naturalWidth > 0) {
-        ctx.drawImage(sprite, -size / 2, -size / 2, size, size);
-      } else {
-        ctx.fillStyle = enemy.hitFlash > 0 ? "#ffffff" : enemy.kind.color;
-        ctx.beginPath();
-        ctx.arc(0, 0, enemy.radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-      if (enemy.elite || enemy.hp < enemy.maxHp) {
-        const barWidth = enemy.boss ? 70 : 36;
-        ctx.fillStyle = "#080a10cc";
-        ctx.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.radius - 13, barWidth, 5);
-        ctx.fillStyle = enemy.boss ? "#ff596f" : "#b56cff";
-        ctx.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.radius - 13, barWidth * Math.max(0, enemy.hp / enemy.maxHp), 5);
-      }
-    }
-  }
-
-  private drawPlayer(): void {
-    const ctx = this.context;
-    const blink = this.player.invulnerable > 0 && Math.floor(this.elapsed * 20) % 2 === 0;
-    if (blink) return;
-    ctx.save();
-    ctx.translate(this.player.x, this.player.y + Math.sin(this.elapsed * 7) * 1.5);
-    ctx.rotate(this.player.facing + Math.PI / 2);
-    ctx.shadowBlur = 14;
-    ctx.shadowColor = "#4ce3bd";
-    const sprite = this.sprites.get(84);
-    if (sprite?.complete && sprite.naturalWidth > 0) {
-      ctx.rotate(-this.player.facing - Math.PI / 2);
-      ctx.scale(Math.cos(this.player.facing) < 0 ? -1 : 1, 1);
-      ctx.drawImage(sprite, -19, -22, 38, 38);
-    } else {
-      ctx.fillStyle = "#dce9ef";
-      ctx.beginPath();
-      ctx.moveTo(0, -16);
-      ctx.lineTo(12, 13);
-      ctx.lineTo(0, 8);
-      ctx.lineTo(-12, 13);
+      ctx.lineTo(this.width, this.height);
       ctx.closePath();
       ctx.fill();
     }
-    ctx.restore();
-    if (this.player.shield > 0) {
-      ctx.strokeStyle = "#73d7ff88";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(this.player.x, this.player.y, 22 + Math.sin(this.elapsed * 3), 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    if (this.player.auraDamage > 0) {
-      const gradient = ctx.createRadialGradient(this.player.x, this.player.y, 20, this.player.x, this.player.y, 105);
-      gradient.addColorStop(0, "#ff9a3a22");
-      gradient.addColorStop(1, "#ff5c2700");
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(this.player.x, this.player.y, 105, 0, Math.PI * 2);
-      ctx.fill();
+    for (let index = 0; index < 45; index += 1) {
+      const x = modNumber(hash2(index, 0, this.save.seed) * this.width - this.camera.x * (0.02 + index % 3 * 0.01), this.width);
+      const y = hash2(index, 1, this.save.seed) * this.height * 0.7;
+      ctx.fillStyle = `rgba(210,230,220,${0.08 + hash2(index, 2, this.save.seed) * 0.18})`;
+      ctx.fillRect(Math.floor(x), Math.floor(y), 1 + index % 2, 1 + index % 2);
     }
   }
 
-  private drawProjectiles(): void {
-    const ctx = this.context;
+  private drawWorld(ctx: CanvasRenderingContext2D, biome: Biome, time: number): void {
+    const left = Math.floor((this.camera.x - this.width / 2) / TILE) - 2;
+    const right = Math.ceil((this.camera.x + this.width / 2) / TILE) + 2;
+    const top = Math.floor((this.camera.y - this.height / 2) / TILE) - 2;
+    const bottom = Math.ceil((this.camera.y + this.height / 2) / TILE) + 2;
+    for (let ty = top; ty <= bottom; ty += 1) {
+      for (let tx = left; tx <= right; tx += 1) {
+        const tile = this.world.getTile(tx, ty);
+        if (tile === Tile.Air) continue;
+        this.drawTile(ctx, tile, tx * TILE, ty * TILE, tx, ty, biome, time);
+      }
+    }
+  }
+
+  private drawTile(ctx: CanvasRenderingContext2D, tile: TileId, x: number, y: number, tx: number, ty: number, biome: Biome, time: number): void {
+    if (tile === Tile.Water || tile === Tile.Lava || tile === Tile.Poison) {
+      const color = tile === Tile.Water ? "#2a8fc1" : tile === Tile.Lava ? "#ff4b25" : "#76af35";
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.72;
+      ctx.fillRect(x, y + 3 + Math.sin(time * 2.4 + tx * 0.7) * 2, TILE, TILE);
+      ctx.fillStyle = "#ffffff";
+      ctx.globalAlpha = 0.18;
+      ctx.fillRect(x + 2, y + 5 + Math.sin(time * 3 + tx) * 2, TILE - 4, 2);
+      ctx.globalAlpha = 1;
+      return;
+    }
+    if (tile === Tile.Spikes) {
+      ctx.fillStyle = "#929ba0";
+      for (let index = 0; index < 3; index += 1) {
+        ctx.beginPath();
+        ctx.moveTo(x + index * 8, y + TILE);
+        ctx.lineTo(x + index * 8 + 4, y + 4);
+        ctx.lineTo(x + index * 8 + 8, y + TILE);
+        ctx.fill();
+      }
+      return;
+    }
+    if (tile === Tile.Platform) {
+      ctx.fillStyle = biome.edge;
+      ctx.fillRect(x, y + 4, TILE, 5);
+      ctx.fillStyle = "#1a1714";
+      ctx.fillRect(x + 3, y + 9, 3, 8);
+      ctx.fillRect(x + TILE - 6, y + 9, 3, 8);
+      return;
+    }
+    if (tile === Tile.Ladder || tile === Tile.Rope) {
+      ctx.strokeStyle = tile === Tile.Ladder ? "#9a7247" : "#9f8a61";
+      ctx.lineWidth = 3;
+      if (tile === Tile.Ladder) {
+        ctx.beginPath();
+        ctx.moveTo(x + 6, y); ctx.lineTo(x + 6, y + TILE);
+        ctx.moveTo(x + 18, y); ctx.lineTo(x + 18, y + TILE);
+        for (let rung = 4; rung < TILE; rung += 7) { ctx.moveTo(x + 6, y + rung); ctx.lineTo(x + 18, y + rung); }
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(x + 12, y); ctx.lineTo(x + 12 + Math.sin(time * 2 + ty) * 2, y + TILE);
+        ctx.stroke();
+      }
+      return;
+    }
+
+    const color = this.tileColor(tile, biome);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, TILE, TILE);
+    const above = this.world.getTile(tx, ty - 1);
+    if (!this.world.isSolid(above)) {
+      ctx.fillStyle = tile === Tile.Dirt ? biome.accent : this.shiftColor(color, 24);
+      ctx.fillRect(x, y, TILE, 4);
+      ctx.fillStyle = "rgba(255,255,255,0.09)";
+      ctx.fillRect(x + 2, y + 4, TILE - 4, 2);
+    }
+    const pattern = hash2(tx, ty, this.save.seed);
+    ctx.fillStyle = pattern > 0.5 ? this.shiftColor(color, -16) : this.shiftColor(color, 12);
+    ctx.fillRect(x + 4 + Math.floor(pattern * 9), y + 9, 4, 3);
+    ctx.fillRect(x + 15, y + 17, 3, 2);
+    if (tile >= Tile.Copper && tile <= Tile.Obsidian || tile === Tile.Explosive) {
+      const oreColors: Partial<Record<TileId, string>> = {
+        [Tile.Copper]: "#d87f4f", [Tile.Iron]: "#adb9bd", [Tile.Gold]: "#f3c454",
+        [Tile.Crystal]: "#b66dff", [Tile.Diamond]: "#7cecff", [Tile.Magic]: "#706aff",
+        [Tile.Obsidian]: "#ba4b68", [Tile.Explosive]: "#ec6cff",
+      };
+      ctx.fillStyle = oreColors[tile] ?? "#fff";
+      ctx.shadowBlur = tile >= Tile.Crystal ? 10 : 0;
+      ctx.shadowColor = ctx.fillStyle;
+      ctx.fillRect(x + 4, y + 6, 5, 5);
+      ctx.fillRect(x + 13, y + 12, 6, 4);
+      ctx.fillRect(x + 8, y + 18, 3, 3);
+      ctx.shadowBlur = 0;
+    }
+    const mining = this.world.getMiningProgress(tx, ty);
+    if (mining > 0) {
+      ctx.strokeStyle = `rgba(255,255,255,${0.25 + mining * 0.65})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x + 12, y + 2); ctx.lineTo(x + 9, y + 9); ctx.lineTo(x + 15, y + 14); ctx.lineTo(x + 11, y + 22);
+      ctx.moveTo(x + 9, y + 9); ctx.lineTo(x + 2, y + 12);
+      ctx.moveTo(x + 15, y + 14); ctx.lineTo(x + 22, y + 10);
+      ctx.stroke();
+    }
+  }
+
+  private tileColor(tile: TileId, biome: Biome): string {
+    const colors: Partial<Record<TileId, string>> = {
+      [Tile.Dirt]: "#70513d", [Tile.Stone]: biome.stone, [Tile.Copper]: biome.stone,
+      [Tile.Iron]: biome.stone, [Tile.Gold]: biome.stone, [Tile.Crystal]: "#3c3152",
+      [Tile.Diamond]: "#34525d", [Tile.Magic]: "#262044", [Tile.Obsidian]: "#2a202a",
+      [Tile.Ice]: "#37677d", [Tile.Factory]: "#3d484a", [Tile.Explosive]: "#43304d",
+    };
+    return colors[tile] ?? biome.stone;
+  }
+
+  private drawPlayer(ctx: CanvasRenderingContext2D, time: number): void {
+    const p = this.player;
+    const bob = p.grounded ? Math.sin(p.animationTime * Math.PI * 2) * (p.animation === "idle" ? 1.2 : 2.2) : 0;
+    const run = p.animation === "run" || p.animation === "sprint";
+    const leg = run ? Math.sin(p.animationTime * Math.PI * 2) * 6 : 0;
+    const roll = p.animation === "roll";
+    const alpha = p.invulnerable > 0 && Math.floor(time * 20) % 2 ? 0.45 : 1;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(Math.round(p.x), Math.round(p.y + bob));
+    ctx.scale(p.facing, 1);
+    if (roll) ctx.rotate(p.animationTime * 7 * p.facing);
+    if (p.dashTime > 0) {
+      for (let index = 1; index <= 4; index += 1) {
+        ctx.globalAlpha = 0.12 / index;
+        this.drawPlayerBody(ctx, -index * 12, 0, leg);
+      }
+      ctx.globalAlpha = alpha;
+    }
+    this.drawPlayerBody(ctx, 0, 0, leg);
+    if (p.attackTime > 0) {
+      const progress = 1 - p.attackTime / 0.18;
+      ctx.strokeStyle = "#f2d084";
+      ctx.lineWidth = 5;
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "#f2d084";
+      ctx.beginPath();
+      ctx.arc(8, -3, 34 + p.combo * 5, -1.2 + progress * 0.8, 0.9 + progress * 0.8);
+      ctx.stroke();
+    }
+    if (p.animation === "mine") {
+      ctx.save();
+      ctx.translate(5, -5);
+      ctx.rotate(-0.7 + Math.sin(p.animationTime) * 0.8);
+      ctx.fillStyle = "#b8c2c5";
+      ctx.fillRect(0, -18, 4, 30);
+      ctx.fillRect(-8, -19, 20, 4);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  private drawPlayerBody(ctx: CanvasRenderingContext2D, x: number, y: number, leg: number): void {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = "#162431";
+    ctx.fillRect(-8, 11, 6, 11 + Math.max(0, leg));
+    ctx.fillRect(3, 11, 6, 11 + Math.max(0, -leg));
+    ctx.fillStyle = "#263a4b";
+    ctx.fillRect(-11, -8, 22, 23);
+    ctx.fillStyle = "#d49d63";
+    ctx.fillRect(-13, -5, 4, 13);
+    ctx.fillRect(9, -5, 4, 13);
+    ctx.fillStyle = "#d9b47e";
+    ctx.fillRect(-9, -22, 18, 15);
+    ctx.fillStyle = "#263442";
+    ctx.fillRect(-11, -25, 22, 8);
+    ctx.fillRect(-13, -21, 4, 13);
+    ctx.fillStyle = "#79e7d2";
+    ctx.fillRect(2, -17, 4, 3);
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = "#79e7d2";
+    ctx.fillRect(4, -17, 2, 2);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#dcae55";
+    ctx.fillRect(-3, -5, 6, 9);
+    ctx.restore();
+  }
+
+  private drawBoss(ctx: CanvasRenderingContext2D, time: number): void {
+    const boss = this.boss;
+    if (!boss || boss.dead) return;
+    const color = biomeOrder[(this.save.stage - 1) % biomeOrder.length];
+    const accent = biomes[color].accent;
+    ctx.save();
+    ctx.translate(boss.x, boss.y + Math.sin(time * 2.1) * 3);
+    ctx.shadowBlur = 25;
+    ctx.shadowColor = accent;
+    ctx.fillStyle = boss.flash > 0 ? "#ffffff" : this.shiftColor(accent, -80);
+    ctx.beginPath();
+    ctx.roundRect(-boss.width / 2, -boss.height / 2, boss.width, boss.height, 16);
+    ctx.fill();
+    ctx.fillStyle = this.shiftColor(accent, -35);
+    ctx.fillRect(-boss.width * 0.42, -boss.height * 0.25, boss.width * 0.84, boss.height * 0.38);
+    const variant = (this.save.stage - 1) % 5;
+    ctx.fillStyle = this.shiftColor(accent, -18);
+    if (variant === 0) {
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(side * boss.width * 0.3, -boss.height * 0.42);
+        ctx.lineTo(side * boss.width * 0.48, -boss.height * 0.72);
+        ctx.lineTo(side * boss.width * 0.08, -boss.height * 0.48);
+        ctx.fill();
+      }
+    } else if (variant === 1) {
+      for (let index = -2; index <= 2; index += 1) {
+        ctx.save();
+        ctx.translate(index * boss.width * 0.18, -boss.height * 0.48);
+        ctx.rotate(index * 0.14);
+        ctx.fillRect(-4, -15 - Math.abs(index) * 2, 8, 22);
+        ctx.restore();
+      }
+    } else if (variant === 2) {
+      ctx.beginPath();
+      ctx.ellipse(0, -boss.height * 0.46, boss.width * 0.62, boss.height * 0.22, 0, Math.PI, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = accent;
+      for (let dot = -2; dot <= 2; dot += 1) ctx.fillRect(dot * 12 - 2, -boss.height * 0.56 + Math.abs(dot) * 3, 5, 5);
+    } else if (variant === 3) {
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(0, 0, boss.width * 0.58, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let spoke = 0; spoke < 8; spoke += 1) {
+        const angle = spoke / 8 * Math.PI * 2 + time;
+        ctx.fillRect(Math.cos(angle) * boss.width * 0.62 - 4, Math.sin(angle) * boss.width * 0.62 - 4, 8, 8);
+      }
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(-boss.width * 0.3, -8);
+      ctx.lineTo(-boss.width * 0.9, -boss.height * 0.38);
+      ctx.lineTo(-boss.width * 0.62, boss.height * 0.25);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(boss.width * 0.3, -8);
+      ctx.lineTo(boss.width * 0.9, -boss.height * 0.38);
+      ctx.lineTo(boss.width * 0.62, boss.height * 0.25);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = accent;
+    ctx.fillRect(-boss.width * 0.25, -boss.height * 0.16, boss.width * 0.16, 7);
+    ctx.fillRect(boss.width * 0.09, -boss.height * 0.16, boss.width * 0.16, 7);
+    ctx.fillStyle = "#08090d";
+    ctx.fillRect(-boss.width * 0.22, -boss.height * 0.13, 5, 3);
+    ctx.fillRect(boss.width * 0.14, -boss.height * 0.13, 5, 3);
+    ctx.fillStyle = this.shiftColor(accent, 25);
+    for (let index = 0; index < boss.phase + 2; index += 1) {
+      const angle = time * (0.5 + boss.phase * 0.15) + index / (boss.phase + 2) * Math.PI * 2;
+      const x = Math.cos(angle) * (boss.width * 0.7);
+      const y = Math.sin(angle) * (boss.height * 0.5);
+      ctx.fillRect(x - 4, y - 4, 8, 8);
+    }
+    ctx.restore();
+  }
+
+  private drawMerchant(ctx: CanvasRenderingContext2D, time: number): void {
+    if (!this.merchant.available || this.boss) return;
+    const x = this.merchant.x;
+    const y = this.merchant.y + Math.sin(time * 2) * 1.5;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = "#e8b95c";
+    ctx.fillStyle = "#5a3c2a";
+    ctx.fillRect(-14, -12, 28, 31);
+    ctx.fillStyle = "#c89b5b";
+    ctx.fillRect(-11, -25, 22, 16);
+    ctx.fillStyle = "#241b1a";
+    ctx.fillRect(-14, -29, 28, 7);
+    ctx.fillStyle = "#ffe29a";
+    ctx.fillRect(-6, -19, 4, 3);
+    ctx.fillRect(4, -19, 4, 3);
+    ctx.fillStyle = "#e8b95c";
+    ctx.fillRect(17, -12, 4, 27);
+    ctx.beginPath();
+    ctx.arc(19, -16, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff1ad";
+    ctx.beginPath();
+    ctx.arc(19, -16, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#8f7b58";
+    ctx.font = "bold 7px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("ORIN", 0, 31);
+    ctx.restore();
+  }
+
+  private drawChests(ctx: CanvasRenderingContext2D, time: number): void {
+    for (const chunk of this.world.loadedChunks) {
+      for (const chest of chunk.chests) {
+        if (chest.opened) continue;
+        const color = rarityColors[chest.rarity];
+        ctx.save();
+        ctx.translate(chest.x, chest.y + Math.sin(time * 2.4 + chest.x) * 1.2);
+        ctx.shadowBlur = 14;
+        ctx.shadowColor = color;
+        ctx.fillStyle = "#5d351d";
+        ctx.fillRect(-14, -7, 28, 16);
+        ctx.fillStyle = "#a96c31";
+        ctx.fillRect(-14, -10, 28, 7);
+        ctx.fillStyle = color;
+        ctx.fillRect(-2, -9, 4, 18);
+        ctx.fillRect(-14, -4, 28, 3);
+        if (chest.locked) {
+          ctx.fillStyle = "#f3c55e";
+          ctx.fillRect(-4, -1, 8, 8);
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  private drawHazards(ctx: CanvasRenderingContext2D, time: number): void {
+    for (const chunk of this.world.loadedChunks) {
+      for (const hazard of chunk.hazards) {
+        if (!hazard.active) continue;
+        ctx.save();
+        ctx.translate(hazard.x, hazard.y);
+        if (hazard.kind === "boulder") {
+          ctx.rotate(hazard.phase);
+          ctx.fillStyle = "#62636a";
+          ctx.beginPath();
+          ctx.arc(0, 0, 13, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#85878d";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = "#3d3e43";
+          ctx.fillRect(-4, -8, 5, 5);
+        } else if (hazard.kind === "saw") {
+          ctx.rotate(time * 5);
+          ctx.fillStyle = "#aeb6b8";
+          for (let index = 0; index < 12; index += 1) {
+            ctx.rotate(Math.PI / 6);
+            ctx.fillRect(-2, -17, 4, 9);
+          }
+          ctx.beginPath();
+          ctx.arc(0, 0, 11, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "#5e6568";
+          ctx.beginPath();
+          ctx.arc(0, 0, 4, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = "#6b5e52";
+          ctx.fillRect(-10, -10, 20, 20);
+          ctx.fillStyle = "#97836c";
+          ctx.fillRect(-7, -7, 6, 4);
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  private drawProjectiles(ctx: CanvasRenderingContext2D): void {
     for (const projectile of this.projectiles) {
       if (!projectile.active) continue;
       ctx.save();
       ctx.fillStyle = projectile.color;
-      ctx.shadowBlur = 12;
+      ctx.shadowBlur = 16;
       ctx.shadowColor = projectile.color;
       ctx.beginPath();
       ctx.arc(projectile.x, projectile.y, projectile.radius, 0, Math.PI * 2);
@@ -1627,192 +1754,141 @@ export class Game {
     }
   }
 
-  private drawParticles(): void {
-    const ctx = this.context;
+  private drawParticles(ctx: CanvasRenderingContext2D): void {
     for (const particle of this.particles) {
-      if (particle.life <= 0) continue;
-      ctx.globalAlpha = Math.max(0, particle.life / particle.maxLife);
+      if (!particle.active) continue;
+      ctx.globalAlpha = clamp(particle.life / particle.maxLife, 0, 1);
       ctx.fillStyle = particle.color;
-      ctx.fillRect(Math.round(particle.x), Math.round(particle.y), particle.size, particle.size);
+      if (particle.glow) {
+        ctx.shadowBlur = particle.glow;
+        ctx.shadowColor = particle.color;
+      }
+      ctx.fillRect(particle.x - particle.size / 2, particle.y - particle.size / 2, particle.size, particle.size);
+      ctx.shadowBlur = 0;
     }
     ctx.globalAlpha = 1;
-  }
-
-  private drawTexts(): void {
-    const ctx = this.context;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     for (const text of this.texts) {
-      if (text.life <= 0) continue;
-      ctx.globalAlpha = Math.min(1, text.life * 3);
-      ctx.font = `${text.critical ? "bold 19px" : "bold 14px"} monospace`;
-      ctx.strokeStyle = "#090b12";
-      ctx.lineWidth = 4;
-      ctx.strokeText(text.text, text.x, text.y);
+      ctx.globalAlpha = clamp(text.life / 0.35, 0, 1);
       ctx.fillStyle = text.color;
+      ctx.font = `${text.critical ? "bold " : ""}${text.critical ? 18 : 11}px monospace`;
+      ctx.shadowBlur = text.critical ? 8 : 2;
+      ctx.shadowColor = text.color;
       ctx.fillText(text.text, text.x, text.y);
     }
     ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
   }
 
-  private drawLighting(): void {
-    const ctx = this.context;
-    const gradient = ctx.createRadialGradient(
-      this.canvas.width / 2,
-      this.canvas.height / 2,
-      120,
-      this.canvas.width / 2,
-      this.canvas.height / 2,
-      Math.max(this.canvas.width, this.canvas.height) * 0.7,
-    );
-    gradient.addColorStop(0, "rgba(0,0,0,0)");
-    gradient.addColorStop(0.5, "rgba(4,5,10,.15)");
-    gradient.addColorStop(1, "rgba(1,2,6,.78)");
+  private drawLighting(biome: Biome, time: number): void {
+    const ctx = this.lightContext;
+    ctx.clearRect(0, 0, this.width, this.height);
+    const darkness = biome.id === "surface" ? 0.25 : biome.id === "abyss" ? 0.83 : 0.66;
+    ctx.fillStyle = `rgba(2,3,8,${darkness})`;
+    ctx.fillRect(0, 0, this.width, this.height);
+    ctx.globalCompositeOperation = "destination-out";
+    const playerX = this.player.x - this.camera.x + this.width / 2;
+    const playerY = this.player.y - this.camera.y + this.height / 2;
+    this.cutLight(ctx, playerX, playerY, 150 + Math.sin(time * 2.5) * 5, 0.88);
+    const merchantX = this.merchant.x - this.camera.x + this.width / 2;
+    const merchantY = this.merchant.y - this.camera.y + this.height / 2;
+    if (!this.boss) this.cutLight(ctx, merchantX, merchantY, 95, 0.8);
+    for (const projectile of this.projectiles) {
+      if (!projectile.active) continue;
+      this.cutLight(ctx, projectile.x - this.camera.x + this.width / 2, projectile.y - this.camera.y + this.height / 2, 58, 0.65);
+    }
+    ctx.globalCompositeOperation = "source-over";
+    this.context.drawImage(this.lightCanvas, 0, 0);
+  }
+
+  private cutLight(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, opacity: number): void {
+    const gradient = ctx.createRadialGradient(x, y, radius * 0.08, x, y, radius);
+    gradient.addColorStop(0, `rgba(0,0,0,${opacity})`);
+    gradient.addColorStop(0.55, `rgba(0,0,0,${opacity * 0.72})`);
+    gradient.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    ctx.fillStyle = "rgba(5,8,15,.12)";
-    for (let y = 0; y < this.canvas.height; y += 4) ctx.fillRect(0, y, this.canvas.width, 1);
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  private drawMinimap(): void {
-    const ctx = this.minimapCanvas.getContext("2d");
-    if (!ctx) return;
-    const scale = Math.min(this.minimapCanvas.width / this.maze.width, this.minimapCanvas.height / this.maze.height);
-    const offsetX = (this.minimapCanvas.width - this.maze.width * scale) / 2;
-    const offsetY = (this.minimapCanvas.height - this.maze.height * scale) / 2;
-    ctx.clearRect(0, 0, this.minimapCanvas.width, this.minimapCanvas.height);
-    ctx.fillStyle = "#070a10";
-    ctx.fillRect(0, 0, this.minimapCanvas.width, this.minimapCanvas.height);
-    for (let y = 0; y < this.maze.height; y += 1) {
-      for (let x = 0; x < this.maze.width; x += 1) {
-        const cell = this.maze.cells[y][x];
-        if (!cell.discovered || cell.wall) continue;
-        ctx.fillStyle = cell.room === "boss" ? "#8e4058" : cell.room === "merchant" ? "#c49b4d" : "#4c596b";
-        ctx.fillRect(offsetX + x * scale, offsetY + y * scale, Math.ceil(scale), Math.ceil(scale));
+  private drawScreenFog(biome: Biome, time: number): void {
+    const ctx = this.context;
+    ctx.save();
+    ctx.globalAlpha = biome.id === "surface" ? 0.05 : 0.12;
+    for (let index = 0; index < 8; index += 1) {
+      const x = modNumber(index * 240 + time * (9 + index) - this.camera.x * 0.03, this.width + 300) - 150;
+      const y = this.height * (0.35 + index * 0.08);
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, 150);
+      gradient.addColorStop(0, biome.fog);
+      gradient.addColorStop(1, "transparent");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(x - 150, y - 70, 300, 140);
+    }
+    ctx.restore();
+    if ((!this.boss && this.stageTime < 20) || this.bossIntro > 0) {
+      const alpha = this.bossIntro > 0 ? 0.35 : (20 - this.stageTime) / 20 * 0.18;
+      ctx.fillStyle = `rgba(30,0,8,${alpha})`;
+      ctx.fillRect(0, 0, this.width, this.height);
+    }
+  }
+
+  private drawMinimap(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#05070b";
+    ctx.fillRect(0, 0, width, height);
+    const scale = 2;
+    const centerTx = Math.floor(this.player.x / TILE);
+    const centerTy = Math.floor(this.player.y / TILE);
+    const columns = Math.floor(width / scale);
+    const rows = Math.floor(height / scale);
+    for (let sy = 0; sy < rows; sy += 1) {
+      for (let sx = 0; sx < columns; sx += 1) {
+        const tx = centerTx + sx - Math.floor(columns / 2);
+        const ty = centerTy + sy - Math.floor(rows / 2);
+        const tile = this.world.getTile(tx, ty);
+        if (tile === Tile.Air) continue;
+        ctx.fillStyle = this.world.isLiquid(tile) ? "#2f7894" : tile === Tile.Spikes ? "#c04b58" : "#35404b";
+        ctx.fillRect(sx * scale, sy * scale, scale, scale);
       }
     }
-    for (const chest of this.chests) {
-      const cell = this.worldToCell(chest.x, chest.y);
-      if (chest.opened || !this.maze.cells[cell.y][cell.x].discovered) continue;
-      ctx.fillStyle = chest.secret ? "#b76cff" : "#f3bd58";
-      ctx.fillRect(offsetX + cell.x * scale - 1, offsetY + cell.y * scale - 1, Math.max(3, scale + 2), Math.max(3, scale + 2));
-    }
-    const merchant = this.maze.merchant;
-    if (this.maze.cells[merchant.y][merchant.x].discovered) {
-      ctx.fillStyle = "#ffe099";
-      ctx.fillRect(offsetX + merchant.x * scale - 1, offsetY + merchant.y * scale - 1, Math.max(3, scale + 2), Math.max(3, scale + 2));
-    }
-    ctx.fillStyle = "#e25069";
-    ctx.fillRect(offsetX + this.maze.boss.x * scale - 1, offsetY + this.maze.boss.y * scale - 1, Math.max(3, scale + 2), Math.max(3, scale + 2));
-    const playerCell = this.worldToCell(this.player.x, this.player.y);
-    ctx.fillStyle = "#72f4d4";
-    ctx.fillRect(offsetX + playerCell.x * scale - 1, offsetY + playerCell.y * scale - 1, Math.max(3, scale + 2), Math.max(3, scale + 2));
-  }
-
-  private revealAroundPlayer(): void {
-    const cell = this.worldToCell(this.player.x, this.player.y);
-    for (let y = cell.y - 3; y <= cell.y + 3; y += 1) {
-      for (let x = cell.x - 3; x <= cell.x + 3; x += 1) {
-        if (this.maze.cells[y]?.[x] && Math.hypot(x - cell.x, y - cell.y) <= 3.4) this.maze.cells[y][x].discovered = true;
+    for (const chunk of this.world.loadedChunks) {
+      for (const chest of chunk.chests) {
+        if (chest.opened) continue;
+        const x = width / 2 + (chest.x / TILE - centerTx) * scale;
+        const y = height / 2 + (chest.y / TILE - centerTy) * scale;
+        if (x < 0 || y < 0 || x > width || y > height) continue;
+        ctx.fillStyle = rarityColors[chest.rarity];
+        ctx.fillRect(x - 2, y - 2, 4, 4);
       }
     }
-  }
-
-  private updateFlowField(): void {
-    this.distanceMap = Array.from({ length: this.maze.height }, () => Array(this.maze.width).fill(Infinity));
-    const start = this.worldToCell(this.player.x, this.player.y);
-    const queue: Vec2[] = [start];
-    this.distanceMap[start.y][start.x] = 0;
-    let cursor = 0;
-    while (cursor < queue.length) {
-      const current = queue[cursor++];
-      const nextDistance = this.distanceMap[current.y][current.x] + 1;
-      for (const offset of [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }]) {
-        const x = current.x + offset.x;
-        const y = current.y + offset.y;
-        if (!this.maze.cells[y]?.[x] || this.maze.cells[y][x].wall || this.distanceMap[y][x] <= nextDistance) continue;
-        this.distanceMap[y][x] = nextDistance;
-        queue.push({ x, y });
-      }
+    const merchantX = width / 2 + (this.merchant.x / TILE - centerTx) * scale;
+    const merchantY = height / 2 + (this.merchant.y / TILE - centerTy) * scale;
+    ctx.fillStyle = "#e8b95c";
+    ctx.fillRect(merchantX - 2, merchantY - 2, 5, 5);
+    if (this.arena) {
+      const x = width / 2 + (this.arena.center.x / TILE - centerTx) * scale;
+      const y = height / 2 + (this.arena.center.y / TILE - centerTy) * scale;
+      ctx.fillStyle = "#e74d62";
+      ctx.fillRect(x - 3, y - 3, 6, 6);
     }
+    ctx.fillStyle = "#72f4d5";
+    ctx.beginPath();
+    ctx.moveTo(width / 2, height / 2 - 4);
+    ctx.lineTo(width / 2 - 3, height / 2 + 3);
+    ctx.lineTo(width / 2 + 3, height / 2 + 3);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(232,185,92,0.16)";
+    ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
   }
 
-  private pushHud(): void {
-    const boss = this.enemies.find((enemy) => enemy.boss && !enemy.dead);
-    this.ui.updateHud({
-      hp: this.player.hp,
-      maxHp: this.player.maxHp,
-      mana: this.player.shield > 0 ? this.player.shield : this.player.mana,
-      maxMana: this.player.shield > 0 ? Math.max(1, this.player.shieldMax) : this.player.maxMana,
-      xp: this.player.xp,
-      xpNeeded: this.player.xpNeeded,
-      level: this.player.level,
-      gold: this.save.gold,
-      keys: this.keys,
-      equipmentPower: this.equipmentPower(),
-      floor: this.stage.floor,
-      floorName: this.stage.name,
-      time: this.timeLeft,
-      timerDanger: !this.bossSpawned && this.timeLeft <= 20,
-      objective: this.bossIntroTimer > 0
-        ? "The arena is sealing"
-        : this.bossSpawned
-          ? `Defeat ${this.stage.bossName}`
-          : `${this.chests.filter((chest) => !chest.opened).length} treasures remain · find keys and prepare`,
-      dashCooldown: Math.max(0, this.player.dashReady / this.player.dashCooldown),
-      specialCooldown: Math.max(0, this.player.specialReady / this.player.specialCooldown),
-      potionCharges: this.player.potionCharges,
-      ultimateCharge: this.player.ultimateCharge,
-      boss: boss ? {
-        name: boss.name,
-        hp: boss.hp,
-        maxHp: boss.maxHp,
-        phase: boss.phase === 1 ? "PHASE I" : boss.phase === 2 ? "PHASE II" : "ENRAGED",
-      } : undefined,
-    });
-  }
-
-  private equipmentPower(): number {
-    const stats = this.computedStats();
-    return Math.round(
-      stats.attack * 2 +
-      stats.defense * 3 +
-      stats.maxHp * 0.12 +
-      stats.critChance * 100 +
-      [...this.equipped.values()].reduce((total, item) => total + rarityOrder.indexOf(item.rarity) * 12 + item.level * 4, 0),
-    );
-  }
-
-  private computedStats(): typeof baseStats {
-    const result = { ...baseStats };
-    result.attack *= 1 + this.save.permanentPower * 0.05;
-    result.maxHp *= 1 + this.save.permanentPower * 0.05;
-    this.equipped.forEach((item) => {
-      const levelMultiplier = 1 + item.level * 0.08;
-      for (const [key, value] of Object.entries(item.stats) as [keyof typeof result, number][]) {
-        result[key] += value * levelMultiplier;
-      }
-    });
-    return result;
-  }
-
-  private describeStats(item: Equipment): string {
-    const labels: Record<keyof typeof baseStats, string> = {
-      attack: "ATK",
-      defense: "DEF",
-      maxHp: "HP",
-      critChance: "CRIT",
-      critDamage: "CRIT DMG",
-      attackSpeed: "ATK SPD",
-      moveSpeed: "MOVE",
-      lifeSteal: "DRAIN",
-      luck: "LUCK",
-      cooldownReduction: "COOLDOWN",
-      elementDamage: "ELEMENT",
-    };
-    return (Object.entries(item.stats) as [keyof typeof baseStats, number][])
-      .map(([key, value]) => `+${value < 1 ? Math.round(value * 100) + "%" : Math.round(value)} ${labels[key]}`)
-      .join(" · ");
+  private shiftColor(hex: string, amount: number): string {
+    const value = Number.parseInt(hex.slice(1), 16);
+    const red = clamp((value >> 16) + amount, 0, 255);
+    const green = clamp(((value >> 8) & 255) + amount, 0, 255);
+    const blue = clamp((value & 255) + amount, 0, 255);
+    return `rgb(${red},${green},${blue})`;
   }
 
   private hydrateEquipment(): void {
@@ -1828,121 +1904,60 @@ export class Game {
     try {
       const stored = localStorage.getItem(SAVE_KEY);
       if (!stored) return structuredClone(defaultSave);
-      return { ...structuredClone(defaultSave), ...(JSON.parse(stored) as SaveData) };
+      const parsed = JSON.parse(stored) as Partial<SaveData>;
+      return {
+        ...structuredClone(defaultSave),
+        ...parsed,
+        permanent: { ...defaultSave.permanent, ...parsed.permanent },
+        resources: { ...defaultSave.resources, ...parsed.resources },
+      };
     } catch {
       return structuredClone(defaultSave);
     }
   }
 
-  private persistSave(): void {
+  private persist(): void {
     localStorage.setItem(SAVE_KEY, JSON.stringify(this.save));
-  }
-
-  private activateProjectile(data: Omit<Projectile, "active">): void {
-    const projectile = this.projectiles.find((entry) => !entry.active);
-    if (projectile) Object.assign(projectile, data, { active: true });
-    else this.projectiles.push({ ...data, active: true });
-  }
-
-  private addParticle(x: number, y: number, color: string, size: number, speed: number): void {
-    const angle = this.random.next() * Math.PI * 2;
-    const velocity = speed * (0.3 + this.random.next() * 0.7);
-    const life = 0.25 + this.random.next() * 0.45;
-    this.particles.push({
-      x,
-      y,
-      vx: Math.cos(angle) * velocity,
-      vy: Math.sin(angle) * velocity,
-      life,
-      maxLife: life,
-      size,
-      color,
-    });
-  }
-
-  private nearestEnemy(): Enemy | undefined {
-    return this.enemies
-      .filter((enemy) => !enemy.dead)
-      .sort((a, b) => Math.hypot(a.x - this.player.x, a.y - this.player.y) - Math.hypot(b.x - this.player.x, b.y - this.player.y))[0];
-  }
-
-  private circleWalkable(x: number, y: number, radius: number): boolean {
-    if (this.arenaLocked && this.bossSpawned && !this.bossDefeated) {
-      const arena = this.cellCenter(this.maze.boss);
-      if (Math.abs(x - arena.x) > TILE_SIZE * 2.2 || Math.abs(y - arena.y) > TILE_SIZE * 2.2) return false;
-    }
-    const points = [
-      { x: x - radius, y: y - radius },
-      { x: x + radius, y: y - radius },
-      { x: x - radius, y: y + radius },
-      { x: x + radius, y: y + radius },
-    ];
-    return points.every((point) => {
-      const cell = this.worldToCell(point.x, point.y);
-      return Boolean(this.maze.cells[cell.y]?.[cell.x] && !this.maze.cells[cell.y][cell.x].wall);
-    });
-  }
-
-  private cellCenter(point: Vec2): Vec2 {
-    return { x: point.x * TILE_SIZE + TILE_SIZE / 2, y: point.y * TILE_SIZE + TILE_SIZE / 2 };
-  }
-
-  private worldToCell(x: number, y: number): Vec2 {
-    return { x: Math.floor(x / TILE_SIZE), y: Math.floor(y / TILE_SIZE) };
-  }
-
-  private resize(): void {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.canvas.width = Math.floor(window.innerWidth * dpr);
-    this.canvas.height = Math.floor(window.innerHeight * dpr);
-    this.canvas.style.width = `${window.innerWidth}px`;
-    this.canvas.style.height = `${window.innerHeight}px`;
-    this.context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
-    this.context.imageSmoothingEnabled = false;
   }
 
   private bindInput(): void {
     window.addEventListener("keydown", (event) => {
-      keyMap.add(event.code);
-      if (event.code === "Space") {
-        event.preventDefault();
-        if (this.running && !this.paused) this.dash(this.lastInputX, this.lastInputY);
-      }
-      if (event.code === "KeyE" && !this.paused) {
-        if (this.nearestChest) this.openChest(this.nearestChest);
-        else if (this.nearestFeature) this.interactFeature(this.nearestFeature);
-      }
-      if (event.code === "KeyR" && !this.paused) this.useSpecial();
-      if (event.code === "KeyQ" && !this.paused) this.usePotion();
-      if (event.code === "KeyF" && !this.paused) this.useUltimate();
+      if (!keyState.has(event.code)) pressed.add(event.code);
+      keyState.add(event.code);
+      if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) event.preventDefault();
     });
-    window.addEventListener("keyup", (event) => keyMap.delete(event.code));
+    window.addEventListener("keyup", (event) => keyState.delete(event.code));
     this.canvas.addEventListener("pointermove", (event) => {
       this.mouse.x = event.clientX;
       this.mouse.y = event.clientY;
       this.mouse.active = true;
+      const dx = event.clientX - this.width / 2;
+      const dy = event.clientY - this.height / 2;
+      const length = Math.max(1, Math.hypot(dx, dy));
+      this.aim.x = dx / length;
+      this.aim.y = dy / length;
     });
-    this.canvas.addEventListener("pointerdown", () => {
-      this.mouse.down = true;
+    this.canvas.addEventListener("pointerdown", (event) => {
+      if (event.button === 0) this.mouse.down = true;
       this.audio.unlock();
     });
     window.addEventListener("pointerup", () => { this.mouse.down = false; });
     this.canvas.addEventListener("pointerleave", () => { this.mouse.active = false; });
+    window.addEventListener("gamepadconnected", () => this.audio.unlock());
   }
 
-  private loadSprite(index: number): void {
-    const image = new Image();
-    image.src = `/assets/kenney/Tiles/tile_${String(index).padStart(4, "0")}.png`;
-    this.sprites.set(index, image);
+  private resize(): void {
+    this.width = window.innerWidth;
+    this.height = window.innerHeight;
+    this.canvas.width = this.width;
+    this.canvas.height = this.height;
+    this.lightCanvas.width = this.width;
+    this.lightCanvas.height = this.height;
+    this.context.imageSmoothingEnabled = false;
+    this.lightContext.imageSmoothingEnabled = false;
   }
+}
 
-  private shiftColor(hex: string, amount: number): string {
-    const value = Number.parseInt(hex.slice(1), 16);
-    const r = Math.max(0, Math.min(255, (value >> 16) + amount));
-    const g = Math.max(0, Math.min(255, ((value >> 8) & 0xff) + amount));
-    const b = Math.max(0, Math.min(255, (value & 0xff) + amount));
-    return `rgb(${r},${g},${b})`;
-  }
+function modNumber(value: number, divisor: number): number {
+  return ((value % divisor) + divisor) % divisor;
 }

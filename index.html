@@ -3,148 +3,154 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#080b12" />
-    <meta
-      name="description"
-      content="Arcane Labyrinth, a fast-paced pixel roguelite dungeon crawler."
-    />
-    <title>Arcane Labyrinth</title>
+    <meta name="theme-color" content="#070810" />
+    <title>UNDERDEEP</title>
   </head>
   <body>
-    <div id="app">
-      <canvas id="game" aria-label="Arcane Labyrinth game canvas"></canvas>
+    <main id="app">
+      <canvas id="game"></canvas>
+
+      <section id="title-screen" class="screen">
+        <div class="title-vignette"></div>
+        <div class="moon"></div>
+        <div class="title-content">
+          <p class="eyebrow">A DESCENT WITHOUT END</p>
+          <h1>UNDER<span>DEEP</span></h1>
+          <p class="title-copy">Mine the forgotten world. Master the descent.<br />Wake the gods beneath.</p>
+          <button id="new-run" class="primary">BEGIN DESCENT</button>
+          <button id="continue-run" class="secondary">CONTINUE · STAGE <b id="saved-stage">01</b></button>
+          <div class="title-controls"><span>A D</span> MOVE <i>•</i> <span>SPACE</span> JUMP <i>•</i> <span>E</span> MINE <i>•</i> <span>J</span> ATTACK</div>
+        </div>
+        <div class="version">V1.0 · CC0 ART BY KENNEY</div>
+      </section>
 
       <div id="hud" class="hidden">
-        <section class="hud-left panel">
-          <div class="portrait"><span>♞</span><small id="hero-level">LV 1</small></div>
+        <section class="hud-player panel">
+          <div class="portrait"><img src="/assets/platformer/Tiles/Characters/tile_0008.png" alt="" /><b id="level">1</b></div>
           <div class="vitals">
-            <div class="bar hp"><i id="hp-fill"></i><b id="hp-text">100 / 100</b></div>
-            <div class="bar mana"><i id="mana-fill"></i><b id="mana-text">100 / 100</b></div>
-            <div class="bar exp"><i id="exp-fill"></i><b id="exp-text">LV 1</b></div>
-            <div class="hero-meta">
-              <span><i>◆</i><b id="gold">0</b> GOLD</span>
-              <span><i>⚔</i><b id="equipment-power">18</b> POWER</span>
+            <div class="bar hp"><i id="hp-fill"></i><span id="hp-text">100 / 100</span></div>
+            <div class="bar mana"><i id="mana-fill"></i><span id="mana-text">80 / 80</span></div>
+            <div class="bar xp"><i id="xp-fill"></i><span id="xp-text">EXPERIENCE</span></div>
+            <div class="combat-meta">
+              <span>ARMOR <b id="armor">0</b></span>
+              <span>WEAPON <b id="weapon">PICKAXE</b></span>
+              <span class="gold">◆ <b id="gold">0</b></span>
             </div>
           </div>
         </section>
 
-        <section class="hud-center">
-          <div class="stage-label">FLOOR <strong id="stage-number">01</strong></div>
-          <div id="floor-title">FORGOTTEN THRESHOLD</div>
-          <div id="timer" class="timer">02:00</div>
-          <div id="timer-caption">UNTIL THE GUARDIAN AWAKENS</div>
+        <section class="hud-stage">
+          <div class="stage-rule"><i></i><span>STAGE <b id="stage">01</b></span><i></i></div>
+          <h2 id="biome">MOONFALL SURFACE</h2>
+          <div id="timer" class="timer">03:00</div>
+          <small id="timer-label">UNTIL THE DEEP STIRS</small>
         </section>
 
-        <section class="hud-right panel">
-          <div class="currency"><span>⚿</span><b id="keys">0</b><small>KEYS</small></div>
-          <button id="equipment-button" class="icon-button" aria-label="Open equipment">I</button>
-          <div id="minimap"></div>
-          <div class="map-objective"><small>CURRENT OBJECTIVE</small><span id="objective">Explore the labyrinth</span></div>
+        <section class="hud-map panel">
+          <canvas id="minimap" width="150" height="96"></canvas>
+          <div class="compass"><span>W</span><i id="compass-needle"></i><span>E</span></div>
+          <div class="quest">
+            <small>CURRENT DESCENT</small>
+            <b id="objective">EXPLORE BELOW THE SURFACE</b>
+            <span id="indicators">TREASURE -- · MERCHANT --</span>
+          </div>
         </section>
 
-        <section id="boss-hud" class="boss-hud hidden">
-          <div><span id="boss-title">FLOOR GUARDIAN</span><small id="boss-phase">PHASE I</small></div>
-          <div class="boss-bar"><i id="boss-fill"></i></div>
+        <section id="boss-hud" class="boss-hud panel hidden">
+          <div><small id="boss-title">FLOOR GUARDIAN</small><b id="boss-name">THE BURIED SENTINEL</b><em id="boss-phase">PHASE I</em></div>
+          <div class="boss-track"><i id="boss-fill"></i></div>
         </section>
 
-        <div class="controls-hint"><kbd>WASD</kbd> MOVE <kbd>CLICK</kbd> ATTACK <kbd>SPACE</kbd> DASH <kbd>E</kbd> OPEN</div>
-
-        <section id="hotbar" class="hotbar panel">
-          <div class="hotbar-slot weapon active"><kbd>1</kbd><span>⚔</span><small>WEAPON</small><i></i></div>
-          <div class="hotbar-slot"><kbd>SPACE</kbd><span>➤</span><small>DASH</small><i id="dash-cooldown"></i></div>
-          <div class="hotbar-slot"><kbd>R</kbd><span>✦</span><small>SPECIAL</small><i id="special-cooldown"></i></div>
-          <div class="hotbar-slot"><kbd>Q</kbd><span>♥</span><small id="potion-count">POTION ×1</small><i></i></div>
-          <div class="hotbar-slot ultimate"><kbd>F</kbd><span>☀</span><small>ULTIMATE</small><i id="ultimate-charge"></i></div>
+        <section class="hotbar panel">
+          <div class="slot active"><kbd>J</kbd><span>⚔</span><small>WEAPON</small><i></i></div>
+          <div class="slot"><kbd>K</kbd><span>➤</span><small>DASH</small><i id="dash-mask"></i></div>
+          <div class="slot"><kbd>R</kbd><span>✦</span><small>SKILL</small><i id="skill-mask"></i></div>
+          <div class="slot"><kbd>Q</kbd><span>♥</span><small id="potion-label">POTION ×2</small><i></i></div>
+          <div class="slot ultimate"><kbd>F</kbd><span>☀</span><small>ULTIMATE</small><i id="ultimate-mask"></i></div>
         </section>
+
+        <section class="quick panel">
+          <div><span>⚔</span><small>WEAPON</small></div>
+          <div><span>⬟</span><small>ARMOR</small></div>
+          <div><span>➟</span><small>BOOTS</small></div>
+          <div id="buffs" class="buffs"></div>
+        </section>
+
+        <div id="interaction" class="interaction hidden"><kbd>E</kbd><span id="interaction-label">OPEN CHEST</span></div>
+        <div class="depth"><small>DEPTH</small><b id="depth">0m</b><span id="chunks">15 CHUNKS STREAMED</span></div>
       </div>
 
-      <main id="title-screen" class="screen active">
-        <div class="title-runes" aria-hidden="true">✦　◇　✧　◇　✦</div>
-        <p class="eyebrow">DESCEND. ADAPT. SURVIVE.</p>
-        <h1>ARCANE<br /><span>LABYRINTH</span></h1>
-        <p class="subtitle">The maze remembers every soul it devours.</p>
-        <div class="menu-actions">
-          <button id="new-game" class="primary-button">BEGIN DESCENT</button>
-          <button id="continue-game" class="secondary-button">CONTINUE</button>
-        </div>
-        <div class="title-footer">
-          <span>20 FLOORS</span><i></i><span>ENDLESS BUILDS</span><i></i><span>ONE WAY OUT</span>
-        </div>
-      </main>
-
       <section id="choice-modal" class="modal hidden">
-        <div class="modal-heading">
-          <p id="choice-kicker">TREASURE FOUND</p>
-          <h2 id="choice-title">CHOOSE YOUR REWARD</h2>
-          <span>Choose one. The others will be lost to the labyrinth.</span>
-        </div>
-        <div id="choice-cards" class="choice-cards"></div>
-      </section>
-
-      <section id="equipment-modal" class="modal dark hidden">
-        <div class="inventory-window panel">
-          <header>
-            <div><p>LOADOUT</p><h2>EQUIPMENT</h2></div>
-            <button id="close-equipment" class="close-button">×</button>
-          </header>
-          <div class="inventory-body">
-            <div id="equipment-slots" class="equipment-slots"></div>
-            <div class="stat-sheet">
-              <p>HERO ATTRIBUTES</p>
-              <div id="stat-list"></div>
-            </div>
-          </div>
+        <div class="modal-shade"></div>
+        <div class="choice-window">
+          <p id="choice-kicker">TREASURE RECOVERED</p>
+          <h2 id="choice-title">Choose one relic</h2>
+          <div id="choice-cards" class="choice-cards"></div>
+          <small>THE OTHER RELICS WILL BE LOST TO THE DEEP</small>
         </div>
       </section>
 
-      <section id="merchant-modal" class="modal dark hidden">
+      <section id="merchant-modal" class="modal hidden">
+        <div class="modal-shade"></div>
         <div class="merchant-window panel">
           <header>
-            <div class="merchant-portrait">♜</div>
-            <div><p>THE GILDED WANDERER</p><h2>LABYRINTH MERCHANT</h2><span>Gold has no value to the dead.</span></div>
-            <button id="close-merchant" class="close-button">×</button>
+            <div class="merchant-face">♟</div>
+            <div><p>THE WANDERING LAMPLIGHTER</p><h2>Orin's Deepmarket</h2><span>"Gold carries farther than courage down here."</span></div>
+            <b id="merchant-gold">◆ 0</b>
           </header>
-          <div id="merchant-gold" class="merchant-gold">◆ 0 GOLD</div>
           <div id="merchant-offers" class="merchant-offers"></div>
+          <button id="leave-merchant" class="secondary">LEAVE MARKET</button>
         </div>
       </section>
 
-      <section id="stage-modal" class="modal dark hidden">
-        <div class="stage-window panel">
-          <p class="eyebrow">GUARDIAN VANQUISHED</p>
-          <h2 id="stage-complete-title">FLOOR 01 CLEARED</h2>
-          <div id="stage-rewards" class="reward-strip"></div>
-          <div class="forge">
-            <div>
-              <p>THE FORGE</p>
-              <h3>Strengthen your equipped relics</h3>
-            </div>
-            <button id="forge-button" class="secondary-button">UPGRADE RANDOM GEAR</button>
-          </div>
-          <button id="next-stage" class="primary-button">DESCEND TO NEXT FLOOR</button>
+      <section id="inventory-modal" class="modal hidden">
+        <div class="modal-shade"></div>
+        <div class="inventory-window panel">
+          <header><div><p>DELVER LOADOUT</p><h2>Equipment & Resources</h2></div><button id="close-inventory" class="icon-button">×</button></header>
+          <div id="equipment-grid" class="equipment-grid"></div>
+          <div id="resource-grid" class="resource-grid"></div>
         </div>
       </section>
 
-      <section id="gameover-modal" class="modal dark hidden">
-        <div class="gameover-window panel">
-          <p class="eyebrow">THE LABYRINTH CLAIMS ANOTHER</p>
-          <h2>YOU HAVE FALLEN</h2>
-          <p id="run-summary"></p>
-          <button id="retry-button" class="primary-button">RISE AGAIN</button>
-          <button id="title-button" class="secondary-button">RETURN TO TITLE</button>
-        </div>
-      </section>
-
-      <div id="interaction" class="interaction hidden"><kbd>E</kbd><span>OPEN CHEST</span></div>
       <section id="boss-intro" class="boss-intro hidden">
-        <div class="boss-sigil">♜</div>
-        <p>FLOOR GUARDIAN</p>
-        <h2 id="intro-boss-name">GRAVETIDE COLOSSUS</h2>
-        <span>THE SEAL HAS BROKEN</span>
+        <div class="boss-silhouette"><i></i><b></b><em></em></div>
+        <p>WARNING · SEALED ARENA</p>
+        <h2 id="intro-name">THE BURIED SENTINEL</h2>
+        <span>THE DEEP HAS CHOSEN ITS GUARDIAN</span>
       </section>
-      <div id="toast" class="toast hidden"></div>
+
+      <section id="victory-modal" class="modal hidden">
+        <div class="modal-shade gold"></div>
+        <div class="result-window panel">
+          <p>GUARDIAN VANQUISHED</p>
+          <h2 id="victory-title">THE WAY BELOW OPENS</h2>
+          <div id="victory-rewards" class="reward-list"></div>
+          <div class="upgrade-row">
+            <button id="upgrade-damage">⚔ DAMAGE</button>
+            <button id="upgrade-defense">⬟ DEFENSE</button>
+            <button id="upgrade-health">♥ HEALTH</button>
+            <button id="upgrade-speed">➟ MOVEMENT</button>
+            <button id="upgrade-crit">✦ CRITICAL</button>
+            <button id="upgrade-mining">◆ MINING</button>
+          </div>
+          <button id="next-stage" class="primary">GENERATE NEXT WORLD</button>
+        </div>
+      </section>
+
+      <section id="death-modal" class="modal hidden">
+        <div class="modal-shade red"></div>
+        <div class="result-window panel">
+          <p>THE DEEP REMEMBERS</p>
+          <h2>YOUR LIGHT WENT OUT</h2>
+          <div id="death-summary" class="reward-list"></div>
+          <button id="retry-stage" class="primary">DESCEND AGAIN</button>
+          <button id="return-title" class="secondary">RETURN TO TITLE</button>
+        </div>
+      </section>
+
+      <div id="toast-host"></div>
       <div id="flash"></div>
-    </div>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -1,265 +1,118 @@
-import type { EnemyKind, EquipmentSlot, Rarity, StageConfig, Stats, Upgrade } from "./types";
+import type { Biome, EquipmentSlot, Rarity, ResourceId, SaveData, TileId } from "./types";
+import { Tile } from "./types";
 
-export const TILE_SIZE = 48;
+export const biomes: Record<string, Biome> = {
+  surface: { id: "surface", name: "Moonfall Surface", sky: "#14243a", far: "#183248", mid: "#214056", near: "#2d5360", stone: "#545b64", edge: "#8f9a9b", accent: "#7ed8bf", fog: "#9fc9ca", gravity: 1 },
+  stone: { id: "stone", name: "Whispering Stone", sky: "#090b12", far: "#111621", mid: "#1b222d", near: "#252d36", stone: "#4c515b", edge: "#747b83", accent: "#d2b26c", fog: "#77808f", gravity: 1 },
+  crystal: { id: "crystal", name: "Prismatic Hollow", sky: "#0c0716", far: "#1a1030", mid: "#2b1744", near: "#3b2056", stone: "#3e3653", edge: "#715e8d", accent: "#ba79ff", fog: "#714a91", gravity: 0.98 },
+  mushroom: { id: "mushroom", name: "Mycelium Gardens", sky: "#080e13", far: "#102320", mid: "#17342d", near: "#22483b", stone: "#3f4f47", edge: "#6b796c", accent: "#72e0a5", fog: "#467962", gravity: 0.95 },
+  mine: { id: "mine", name: "The Forsaken Delve", sky: "#0e0b09", far: "#201813", mid: "#33241a", near: "#493322", stone: "#54463d", edge: "#947650", accent: "#efb55d", fog: "#765a3b", gravity: 1 },
+  ruins: { id: "ruins", name: "Sunken Reliquary", sky: "#0d0b12", far: "#211a27", mid: "#33283a", near: "#46384a", stone: "#56505b", edge: "#968375", accent: "#e4bc72", fog: "#796976", gravity: 1 },
+  lava: { id: "lava", name: "Cinder Maw", sky: "#160706", far: "#32100c", mid: "#561b10", near: "#742713", stone: "#392d31", edge: "#6d4a3b", accent: "#ff6639", fog: "#8d2f1d", gravity: 1.04 },
+  ice: { id: "ice", name: "Glacier Crypt", sky: "#06101a", far: "#0d2639", mid: "#163a51", near: "#23536b", stone: "#38566d", edge: "#87c8dc", accent: "#8cf0ff", fog: "#6ea7b9", gravity: 0.97 },
+  poison: { id: "poison", name: "Viridian Blight", sky: "#0a1007", far: "#17250e", mid: "#283b15", near: "#3c5620", stone: "#41483a", edge: "#77854d", accent: "#a7ee50", fog: "#648436", gravity: 1 },
+  abyss: { id: "abyss", name: "The Lightless Deep", sky: "#020307", far: "#070813", mid: "#0d0d20", near: "#17152d", stone: "#24223c", edge: "#49436a", accent: "#746cff", fog: "#282449", gravity: 0.9 },
+  factory: { id: "factory", name: "Buried Machine", sky: "#070d10", far: "#101d20", mid: "#1a2d2e", near: "#263c3a", stone: "#3f4b4c", edge: "#7d8c83", accent: "#f0aa3c", fog: "#536965", gravity: 1.05 },
+};
 
-const bossNames = [
-  "Gravetide Colossus",
-  "Broodmother Veyra",
-  "Cinderheart Golem",
-  "Sir Malrec, the Hollow",
-  "Nhal the Boneweaver",
-  "Warden of Thorns",
-  "The Drowned Oracle",
-  "Maw of the Deep",
-  "Velastra, Witch Queen",
-  "Clockwork Behemoth",
-  "Frostbound Jotunn",
-  "The Thousand-Eyed",
-  "Solar Revenant",
-  "Abyssal Hydra",
-  "Crystal Titan",
-  "Lord of the Wild Hunt",
-  "Astral Devourer",
-  "Shadow Dragon Vharos",
-  "Demon King Azrath",
-  "The Labyrinth Eternal",
-];
+export const biomeOrder = ["stone", "crystal", "mushroom", "mine", "ruins", "lava", "ice", "poison", "abyss", "factory"] as const;
 
-const floorNames = [
-  "Forgotten Threshold",
-  "Webbed Warrens",
-  "Ember Vault",
-  "Hall of Fallen Oaths",
-  "Ossuary of Whispers",
-  "Verdant Prison",
-  "Sunken Archive",
-  "Hollow Depths",
-  "Coven of Ash",
-  "Brass Catacombs",
-  "Glacial Sepulcher",
-  "Watcher Maze",
-  "Temple of Dawn",
-  "Hydra's Coil",
-  "Prismatic Core",
-  "Moonlit Chase",
-  "Starless Expanse",
-  "Umbral Roost",
-  "Infernal Throne",
-  "Heart of the Maze",
-];
-
-const palettes: [string, string, string, string][] = [
-  ["#171c2a", "#252c3c", "#5b536e", "#4ad9a8"],
-  ["#171522", "#2a2035", "#78456b", "#d25ca1"],
-  ["#201619", "#3a2020", "#8e3e2e", "#ff8b3d"],
-  ["#171a22", "#292d38", "#726b78", "#e0b66b"],
-  ["#15171d", "#252832", "#555c69", "#8bd7d1"],
-];
-
-export function getStageConfig(floor: number): StageConfig {
-  const n = Math.max(1, Math.min(20, floor));
-  const mazeSize = Math.min(39, 23 + Math.floor((n - 1) / 2) * 2);
-  const palette = palettes[(n - 1) % palettes.length];
-  return {
-    floor: n,
-    name: floorNames[n - 1],
-    palette,
-    mazeWidth: mazeSize,
-    mazeHeight: mazeSize,
-    duration: 120,
-    bossDamage: 10 * Math.pow(1.14, n - 1),
-    bossSpeed: 68 + n * 2.2,
-    bossSize: 27 + n * 0.75,
-    trapCount: 3 + Math.floor(n * 0.7),
-    treasureCount: 8 + Math.floor(n / 3),
-    bossName: bossNames[n - 1],
-    bossHp: 600 * Math.pow(1.2, n - 1),
-  };
-}
-
-export const enemyKinds: EnemyKind[] = [
-  { name: "Slime", color: "#65d66f", accent: "#c6ff9f", speed: 78, radius: 13, xp: 7, behavior: "chase", sprite: 96 },
-  { name: "Skeleton", color: "#d7d2b8", accent: "#ffffff", speed: 92, radius: 12, xp: 10, behavior: "chase", sprite: 85 },
-  { name: "Bat", color: "#9a6bd4", accent: "#e7c4ff", speed: 125, radius: 10, xp: 9, behavior: "orbit", sprite: 99 },
-  { name: "Spider", color: "#b45a72", accent: "#ff9f8f", speed: 108, radius: 11, xp: 12, behavior: "charger", sprite: 98 },
-  { name: "Ghost", color: "#67b9d2", accent: "#d7ffff", speed: 88, radius: 13, xp: 15, behavior: "orbit", sprite: 97 },
-  { name: "Goblin", color: "#88a94f", accent: "#e0d76a", speed: 102, radius: 12, xp: 17, behavior: "ranged", sprite: 101 },
-  { name: "Mage", color: "#7f70db", accent: "#e79cff", speed: 70, radius: 12, xp: 20, behavior: "ranged", sprite: 90 },
-  { name: "Knight", color: "#8c98a9", accent: "#f2cf73", speed: 82, radius: 14, xp: 24, behavior: "charger", sprite: 87 },
-  { name: "Demon", color: "#c74848", accent: "#ffb64d", speed: 100, radius: 15, xp: 30, behavior: "chase", sprite: 103 },
-];
+export const bossNames = [
+  "The Buried Sentinel",
+  "Amethyst Colossus",
+  "Sovereign Mycelia",
+  "Ironjaw Excavator",
+  "The Last Reliquary King",
+  "Pyraxis, Cinder Wyrm",
+  "Glacielle the Unmoving",
+  "The Verdant Hunger",
+  "Umbra, Beast Below",
+  "Machina Prime",
+  "Stoneheart Ascendant",
+  "The Crystal Choir",
+  "Sporebound Matriarch",
+  "The Golden Drill",
+  "Emperor of Dust",
+  "Worldfire Dragon",
+  "The Pale Titan",
+  "Blightmind",
+  "Lord of the Empty Dark",
+  "AION, GOD BENEATH",
+] as const;
 
 export const rarityOrder: Rarity[] = ["Common", "Rare", "Epic", "Legendary", "Mythic", "Ancient"];
 export const rarityColors: Record<Rarity, string> = {
-  Common: "#9aa5b1",
-  Rare: "#56a8ff",
-  Epic: "#b76cff",
-  Legendary: "#ffb84c",
-  Mythic: "#ff577f",
-  Ancient: "#65f1d0",
+  Common: "#b7bec7",
+  Rare: "#50a9ff",
+  Epic: "#b86cff",
+  Legendary: "#ffb84d",
+  Mythic: "#ff5f7e",
+  Ancient: "#7fffe0",
 };
 
-export const slots: EquipmentSlot[] = ["Weapon", "Helmet", "Armor", "Boots", "Ring", "Amulet", "Artifact"];
-
-export const itemNames: Record<EquipmentSlot, string[]> = {
-  Weapon: ["Moonfang Blade", "Ashen Longbow", "Starcaller Staff", "Gravetide Axe"],
-  Helmet: ["Watcher Hood", "Crown of Embers", "Knight's Visor", "Brood Mask"],
-  Armor: ["Runed Carapace", "Warden Plate", "Ghostweave Mantle", "Titan Harness"],
-  Boots: ["Windstep Greaves", "Mirewalkers", "Blink Boots", "Gilded Sabatons"],
-  Ring: ["Serpent Loop", "Ruby Signet", "Ring of Echoes", "Fortune Band"],
-  Amulet: ["Heart of Winter", "Sun Charm", "Bloodstone Locket", "Void Pendant"],
-  Artifact: ["Fire Orb", "Clockwork Drone", "Healing Totem", "Lucky Charm"],
-};
-
+export const slots: EquipmentSlot[] = ["Weapon", "Helmet", "Armor", "Boots", "Ring", "Amulet", "Artifact", "Pet"];
 export const slotIcons: Record<EquipmentSlot, string> = {
   Weapon: "⚔",
   Helmet: "♜",
-  Armor: "◆",
-  Boots: "♞",
-  Ring: "○",
+  Armor: "⬟",
+  Boots: "➟",
+  Ring: "◉",
   Amulet: "◇",
   Artifact: "✦",
+  Pet: "◆",
 };
 
-export const baseStats: Stats = {
-  attack: 18,
-  defense: 3,
-  maxHp: 120,
-  critChance: 0.08,
-  critDamage: 1.75,
-  attackSpeed: 1,
-  moveSpeed: 190,
-  lifeSteal: 0,
-  luck: 0,
-  cooldownReduction: 0,
-  elementDamage: 0,
+export const equipmentNames: Record<EquipmentSlot, string[]> = {
+  Weapon: ["Gravesong Pick", "Emberfang", "Moonsteel Edge", "Faultline Hammer", "Void Carver"],
+  Helmet: ["Delver's Crown", "Crystal Visor", "Cinder Mask", "Abyss Hood", "King's Lantern"],
+  Armor: ["Deepguard Plate", "Mushroom Mantle", "Obsidian Shell", "Runic Coat", "Machina Heart"],
+  Boots: ["Cavewind Treads", "Wallrunner Greaves", "Frozen Steps", "Rift Boots", "Meteor Spurs"],
+  Ring: ["Ring of Echoes", "Goldvein Loop", "Ember Circle", "Prismatic Signet", "Abyssal Band"],
+  Amulet: ["Miner's Oath", "Heart of Stone", "Spore Charm", "Sunken Medallion", "Godshard"],
+  Artifact: ["Chrono Shard", "Living Compass", "Volcanic Core", "Ancient Gear", "Crystal Moon"],
+  Pet: ["Lantern Wisp", "Molekin", "Clockwork Finch", "Glowcap Sprite", "Shardling"],
 };
 
-export const upgrades: Upgrade[] = [
-  {
-    id: "fury",
-    name: "Brutal Strength",
-    description: "+20% attack damage",
-    icon: "⚔",
-    rarity: "Common",
-    maxStacks: 5,
-    apply: ({ player }) => { player.attack *= 1.2; },
-  },
-  {
-    id: "vitality",
-    name: "Giant's Heart",
-    description: "+50 maximum health and heal 50",
-    icon: "♥",
-    rarity: "Common",
-    maxStacks: 5,
-    apply: ({ player }) => { player.maxHp += 50; player.hp = Math.min(player.maxHp, player.hp + 50); },
-  },
-  {
-    id: "haste",
-    name: "Wind Dancer",
-    description: "+15% movement speed",
-    icon: "➤",
-    rarity: "Common",
-    maxStacks: 4,
-    apply: ({ player }) => { player.speed *= 1.15; },
-  },
-  {
-    id: "rapid",
-    name: "Quickening Rune",
-    description: "+18% attack speed",
-    icon: "»",
-    rarity: "Rare",
-    maxStacks: 5,
-    apply: ({ player }) => { player.attackSpeed *= 1.18; },
-  },
-  {
-    id: "critical",
-    name: "Assassin's Mark",
-    description: "+12% critical chance",
-    icon: "✧",
-    rarity: "Rare",
-    maxStacks: 4,
-    apply: ({ player }) => { player.critChance += 0.12; },
-  },
-  {
-    id: "multishot",
-    name: "Twin Fangs",
-    description: "Fire an additional projectile",
-    icon: "⋔",
-    rarity: "Epic",
-    maxStacks: 2,
-    apply: ({ player }) => { player.projectiles += 1; },
-  },
-  {
-    id: "pierce",
-    name: "Spectral Bolts",
-    description: "Projectiles pierce another enemy",
-    icon: "↠",
-    rarity: "Rare",
-    maxStacks: 3,
-    apply: ({ player }) => { player.projectilePierce += 1; },
-  },
-  {
-    id: "lifesteal",
-    name: "Crimson Pact",
-    description: "Restore 4% of damage dealt",
-    icon: "♦",
-    rarity: "Epic",
-    maxStacks: 3,
-    apply: ({ player }) => { player.lifeSteal += 0.04; },
-  },
-  {
-    id: "dash",
-    name: "Phase Step",
-    description: "-25% dash cooldown",
-    icon: "◫",
-    rarity: "Rare",
-    maxStacks: 3,
-    apply: ({ player }) => { player.dashCooldown *= 0.75; },
-  },
-  {
-    id: "thorns",
-    name: "Thornmail",
-    description: "Return 35% contact damage",
-    icon: "✷",
-    rarity: "Rare",
-    maxStacks: 3,
-    apply: ({ player }) => { player.thorns += 0.35; },
-  },
-  {
-    id: "aura",
-    name: "Fire Aura",
-    description: "Scorch nearby enemies every second",
-    icon: "☀",
-    rarity: "Epic",
-    maxStacks: 4,
-    apply: ({ player }) => { player.auraDamage += 10; },
-  },
-  {
-    id: "chain",
-    name: "Chain Lightning",
-    description: "Hits may arc lightning to a nearby foe",
-    icon: "ϟ",
-    rarity: "Legendary",
-    maxStacks: 3,
-    apply: ({ player }) => { player.chainChance += 0.18; },
-  },
-  {
-    id: "shield",
-    name: "Arcane Aegis",
-    description: "Gain a 35-point regenerating shield",
-    icon: "⬡",
-    rarity: "Epic",
-    maxStacks: 3,
-    apply: ({ player }) => { player.shield += 35; },
-  },
-  {
-    id: "berserk",
-    name: "Demon's Bargain",
-    description: "+45% attack, -20 maximum health",
-    icon: "♨",
-    rarity: "Legendary",
-    maxStacks: 3,
-    apply: ({ player }) => { player.attack *= 1.45; player.maxHp = Math.max(40, player.maxHp - 20); player.hp = Math.min(player.hp, player.maxHp); },
-  },
-];
+export const tileHardness: Partial<Record<TileId, number>> = {
+  [Tile.Dirt]: 0.22,
+  [Tile.Stone]: 0.52,
+  [Tile.Copper]: 0.7,
+  [Tile.Iron]: 0.86,
+  [Tile.Gold]: 1,
+  [Tile.Crystal]: 0.92,
+  [Tile.Diamond]: 1.35,
+  [Tile.Magic]: 1.4,
+  [Tile.Obsidian]: 1.8,
+  [Tile.Ice]: 0.45,
+  [Tile.Factory]: 1.1,
+  [Tile.Explosive]: 0.35,
+};
+
+export const tileResource: Partial<Record<TileId, ResourceId>> = {
+  [Tile.Stone]: "stone",
+  [Tile.Copper]: "copper",
+  [Tile.Iron]: "iron",
+  [Tile.Gold]: "goldOre",
+  [Tile.Crystal]: "crystal",
+  [Tile.Diamond]: "diamond",
+  [Tile.Magic]: "magic",
+  [Tile.Obsidian]: "obsidian",
+  [Tile.Factory]: "iron",
+};
+
+export const defaultSave: SaveData = {
+  version: 1,
+  stage: 1,
+  seed: 0,
+  gold: 0,
+  keys: 0,
+  stones: 0,
+  materials: 0,
+  permanent: { attack: 0, defense: 0, hp: 0, speed: 0, crit: 0, mining: 0 },
+  resources: { stone: 0, copper: 0, iron: 0, goldOre: 0, crystal: 0, diamond: 0, magic: 0, obsidian: 0 },
+  equipment: [],
+  equipped: {},
+  modifiedTiles: {},
+  openedChests: [],
+  bestDepth: 0,
+};

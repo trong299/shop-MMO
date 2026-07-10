@@ -1,37 +1,35 @@
-# Arcane Labyrinth
+# UNDERDEEP
 
-A polished browser-based pixel roguelite dungeon crawler. Explore quiet procedurally generated labyrinths, uncover treasure, solve rune puzzles, trade with wandering merchants, prepare a build, and conquer 20 unique floor guardians.
+A from-scratch side-scrolling mining roguelite built with strict TypeScript and Canvas 2D.
 
-Each floor is a tense two-minute treasure hunt with no roaming enemies. When the seal timer expires, the exits lock and the player is pulled into a cinematic one-on-one boss battle.
+## Features
 
-## Run locally
+- Deterministic infinite 64×64 tile chunks with dynamic loading and unloading
+- Ten underground biomes, mineable ores, treasure, ruins, hazards, and merchant camps
+- Responsive running, sprinting, variable jump, coyote time, jump buffer, double jump, wall slide/jump, ledge grab, dash, roll, ladders, ropes, and drop-through platforms
+- Three-card treasure choices, eight equipment slots, six rarities, upgrades, resources, and autosave
+- Twenty timed stages with exactly one cinematic multi-phase boss per stage
+- Keyboard and gamepad support, synthesized adaptive audio, parallax, fog, lighting, particles, and dark-gold animated UI
+
+## Run
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the URL printed by Vite.
-
 ## Controls
 
-- `WASD` / arrow keys: move
-- Mouse / `J`: aim and attack
-- `Space`: dash
-- `E`: open nearby chest
-- `R`: special attack
+- `A / D` or left stick: move
+- `Shift`: sprint
+- `Space`: jump / double jump / wall jump
+- `K` or gamepad B: dash
+- `L`: roll
+- `J` or gamepad X: attack
+- `R` or gamepad Y: skill
 - `Q`: use potion
-- `F`: ultimate attack
-- `I` / `Escape`: equipment
-- Gamepad: left stick moves, right stick attacks, A opens, B dashes
+- `E` or gamepad A: interact / mine
+- `S`: drop through platforms
+- `I`: equipment
 
-## Validation
-
-```bash
-npm run lint
-npm run build
-```
-
-## Assets
-
-Pixel sprites are from [Kenney's Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon), licensed CC0. Additional effects, UI, environments, and audio are generated at runtime.
+Pixel Platformer art is CC0 by Kenney. All terrain rendering, effects, animation, world generation, and game logic are original to this project.

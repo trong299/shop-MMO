@@ -1,275 +1,279 @@
 import "./styles.css";
 import { rarityColors, slots } from "./data";
-import { Game, type GameUI, type HudState } from "./game";
-import type { EquipmentSlot } from "./types";
+import { Game } from "./game";
+import type { EquipmentSlot, HudState, MerchantOffer, RewardChoice, SaveData } from "./types";
 
-const get = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+const get = <T extends HTMLElement>(id: string): T => {
+  const element = document.getElementById(id);
+  if (!element) throw new Error(`Missing element #${id}`);
+  return element as T;
+};
+
 const canvas = get<HTMLCanvasElement>("game");
-const minimapHost = get<HTMLDivElement>("minimap");
-const minimapCanvas = document.createElement("canvas");
-minimapCanvas.width = 148;
-minimapCanvas.height = 112;
-minimapHost.append(minimapCanvas);
-
 const titleScreen = get<HTMLElement>("title-screen");
 const hud = get<HTMLElement>("hud");
 const choiceModal = get<HTMLElement>("choice-modal");
-const equipmentModal = get<HTMLElement>("equipment-modal");
 const merchantModal = get<HTMLElement>("merchant-modal");
-const stageModal = get<HTMLElement>("stage-modal");
-const gameoverModal = get<HTMLElement>("gameover-modal");
-const interaction = get<HTMLElement>("interaction");
-const toastElement = get<HTMLElement>("toast");
+const inventoryModal = get<HTMLElement>("inventory-modal");
+const victoryModal = get<HTMLElement>("victory-modal");
+const deathModal = get<HTMLElement>("death-modal");
+const bossIntro = get<HTMLElement>("boss-intro");
+const bossHud = get<HTMLElement>("boss-hud");
 const flash = get<HTMLElement>("flash");
-const continueButton = get<HTMLButtonElement>("continue-game");
-let toastTimeout = 0;
+const minimap = get<HTMLCanvasElement>("minimap");
+const minimapContext = minimap.getContext("2d")!;
 
-function setVisible(element: HTMLElement, visible: boolean): void {
-  element.classList.toggle("hidden", !visible);
-}
+const visible = (element: HTMLElement, show: boolean): void => {
+  element.classList.toggle("hidden", !show);
+};
+const percent = (value: number, max: number): number => Math.max(0, Math.min(1, value / Math.max(1, max)));
+
+let merchantClose: (() => void) | undefined;
+
+const game = new Game(canvas, {
+  updateHud: (state) => updateHud(state),
+  drawMinimap: (draw) => draw(minimapContext, minimap.width, minimap.height),
+  showChoices: (kicker, title, choices) => showChoices(kicker, title, choices),
+  showMerchant: (offers, close) => showMerchant(offers, close),
+  showInventory: (save, equipped) => showInventory(save, equipped),
+  hideInventory: () => visible(inventoryModal, false),
+  showBossIntro: (name) => {
+    get<HTMLElement>("intro-name").textContent = name;
+    visible(bossIntro, true);
+  },
+  hideBossIntro: () => visible(bossIntro, false),
+  showVictory: (title, rewards) => {
+    get<HTMLElement>("victory-title").textContent = title;
+    const host = get<HTMLElement>("victory-rewards");
+    host.replaceChildren(...rewards.map((reward) => {
+      const item = document.createElement("div");
+      item.textContent = reward;
+      return item;
+    }));
+    visible(victoryModal, true);
+  },
+  showDeath: (summary) => {
+    const host = get<HTMLElement>("death-summary");
+    host.replaceChildren(...summary.map((line) => {
+      const item = document.createElement("div");
+      item.textContent = line;
+      return item;
+    }));
+    visible(deathModal, true);
+  },
+  setInteraction: (label) => {
+    const interaction = get<HTMLElement>("interaction");
+    visible(interaction, Boolean(label));
+    if (label) get<HTMLElement>("interaction-label").textContent = label;
+  },
+  toast: (message, color = "#e8b95c") => {
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.style.setProperty("--toast", color);
+    toast.textContent = message;
+    get<HTMLElement>("toast-host").append(toast);
+    window.setTimeout(() => toast.remove(), 2700);
+  },
+  flash: (color) => {
+    flash.style.background = color;
+    flash.classList.remove("fire");
+    void flash.offsetWidth;
+    flash.classList.add("fire");
+  },
+});
 
 function updateHud(state: HudState): void {
-  const hpPercent = Math.max(0, state.hp / state.maxHp) * 100;
-  const manaPercent = Math.max(0, state.mana / state.maxMana) * 100;
-  const xpPercent = Math.max(0, state.xp / state.xpNeeded) * 100;
-  get<HTMLElement>("hp-fill").style.width = `${hpPercent}%`;
-  get<HTMLElement>("mana-fill").style.width = `${manaPercent}%`;
-  get<HTMLElement>("exp-fill").style.width = `${xpPercent}%`;
-  get<HTMLElement>("hp-text").textContent = `${Math.ceil(Math.max(0, state.hp))} / ${Math.round(state.maxHp)}`;
-  get<HTMLElement>("mana-text").textContent = `${Math.ceil(Math.max(0, state.mana))} / ${Math.round(state.maxMana)}`;
-  get<HTMLElement>("exp-text").textContent = `LV ${state.level} · ${Math.round(xpPercent)}%`;
-  get<HTMLElement>("hero-level").textContent = `LV ${state.level}`;
+  get<HTMLElement>("hp-fill").style.transform = `scaleX(${percent(state.hp, state.maxHp)})`;
+  get<HTMLElement>("mana-fill").style.transform = `scaleX(${percent(state.mana, state.maxMana)})`;
+  get<HTMLElement>("xp-fill").style.transform = `scaleX(${percent(state.xp, state.xpNext)})`;
+  get<HTMLElement>("hp-text").textContent = `${Math.ceil(state.hp)} / ${Math.round(state.maxHp)}`;
+  get<HTMLElement>("mana-text").textContent = `${Math.ceil(state.mana)} / ${Math.round(state.maxMana)}`;
+  get<HTMLElement>("xp-text").textContent = `${Math.round(percent(state.xp, state.xpNext) * 100)}% EXPERIENCE`;
+  get<HTMLElement>("level").textContent = state.level.toString();
+  get<HTMLElement>("armor").textContent = state.armor.toString();
+  get<HTMLElement>("weapon").textContent = state.weapon.toUpperCase();
   get<HTMLElement>("gold").textContent = state.gold.toLocaleString();
-  get<HTMLElement>("keys").textContent = state.keys.toString();
-  get<HTMLElement>("equipment-power").textContent = state.equipmentPower.toLocaleString();
-  get<HTMLElement>("stage-number").textContent = String(state.floor).padStart(2, "0");
-  get<HTMLElement>("floor-title").textContent = state.floorName;
-  get<HTMLElement>("objective").textContent = state.objective;
+  get<HTMLElement>("stage").textContent = String(state.stage).padStart(2, "0");
+  get<HTMLElement>("biome").textContent = state.biome;
   const minutes = Math.floor(state.time / 60);
   const seconds = Math.floor(state.time % 60);
   const timer = get<HTMLElement>("timer");
   timer.textContent = state.boss ? "BOSS" : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  timer.classList.toggle("danger", state.timerDanger);
-  get<HTMLElement>("timer-caption").textContent = state.boss ? "THE ARENA IS SEALED" : state.timerDanger ? "THE GUARDIAN IS STIRRING" : "UNTIL THE GUARDIAN AWAKENS";
-  get<HTMLElement>("dash-cooldown").style.height = `${state.dashCooldown * 100}%`;
-  get<HTMLElement>("special-cooldown").style.height = `${state.specialCooldown * 100}%`;
-  get<HTMLElement>("ultimate-charge").style.height = `${100 - state.ultimateCharge}%`;
-  get<HTMLElement>("potion-count").textContent = `POTION ×${state.potionCharges}`;
-
-  const bossHud = get<HTMLElement>("boss-hud");
-  setVisible(bossHud, Boolean(state.boss));
+  timer.classList.toggle("warning", state.bossWarning);
+  get<HTMLElement>("timer-label").textContent = state.boss ? "THE ARENA IS SEALED" : state.bossWarning ? "THE GUARDIAN IS WAKING" : "UNTIL THE DEEP STIRS";
+  get<HTMLElement>("objective").textContent = state.objective.toUpperCase();
+  get<HTMLElement>("indicators").textContent = `TREASURE ${state.treasureDistance ?? "--"}m · MERCHANT ${state.merchantDistance ?? "--"}m`;
+  get<HTMLElement>("depth").textContent = `${state.depth}m`;
+  get<HTMLElement>("dash-mask").style.height = `${state.dash * 100}%`;
+  get<HTMLElement>("skill-mask").style.height = `${state.skill * 100}%`;
+  get<HTMLElement>("ultimate-mask").style.height = `${100 - state.ultimate}%`;
+  get<HTMLElement>("potion-label").textContent = `POTION ×${state.potions}`;
+  get<HTMLElement>("compass-needle").style.transform = `rotate(${state.treasureDistance === undefined ? 0 : 20}deg)`;
+  const buffHost = get<HTMLElement>("buffs");
+  buffHost.replaceChildren(...state.buffs.map((buff) => {
+    const icon = document.createElement("i");
+    icon.textContent = buff;
+    return icon;
+  }));
+  visible(bossHud, Boolean(state.boss));
   if (state.boss) {
-    get<HTMLElement>("boss-title").textContent = state.boss.name;
-    get<HTMLElement>("boss-phase").textContent = state.boss.phase;
-    get<HTMLElement>("boss-fill").style.width = `${Math.max(0, state.boss.hp / state.boss.maxHp) * 100}%`;
+    get<HTMLElement>("boss-name").textContent = state.boss.name;
+    get<HTMLElement>("boss-title").textContent = `STAGE ${String(state.stage).padStart(2, "0")} GUARDIAN`;
+    get<HTMLElement>("boss-phase").textContent = `PHASE ${["I", "II", "III"][state.boss.phase - 1]}`;
+    get<HTMLElement>("boss-fill").style.transform = `scaleX(${percent(state.boss.hp, state.boss.maxHp)})`;
   }
 }
 
-const ui: GameUI = {
-  updateHud,
-  showChoices: (kicker, title, choices) => {
-    get<HTMLElement>("choice-kicker").textContent = kicker;
-    get<HTMLElement>("choice-title").textContent = title;
-    const cardHost = get<HTMLElement>("choice-cards");
-    cardHost.replaceChildren();
-    choices.forEach((choice, index) => {
+function showChoices(kicker: string, title: string, choices: RewardChoice[]): void {
+  get<HTMLElement>("choice-kicker").textContent = kicker;
+  get<HTMLElement>("choice-title").textContent = title;
+  const host = get<HTMLElement>("choice-cards");
+  host.replaceChildren();
+  choices.forEach((choice, index) => {
+    const card = document.createElement("button");
+    card.className = "choice-card";
+    card.style.setProperty("--rarity", rarityColors[choice.rarity]);
+    card.style.setProperty("--delay", `${index * 90}ms`);
+    card.innerHTML = `
+      <span class="rarity">${choice.rarity.toUpperCase()}</span>
+      <span class="icon">${choice.icon}</span>
+      <h3>${choice.name}</h3>
+      <p>${choice.description}</p>
+      <b>${choice.tag}</b>
+    `;
+    card.addEventListener("click", () => {
+      visible(choiceModal, false);
+      choice.choose();
+    });
+    host.append(card);
+  });
+  visible(choiceModal, true);
+}
+
+function showMerchant(offers: MerchantOffer[], close: () => void): void {
+  merchantClose = close;
+  const host = get<HTMLElement>("merchant-offers");
+  const render = (): void => {
+    get<HTMLElement>("merchant-gold").textContent = `◆ ${game.saveData.gold.toLocaleString()}`;
+    host.replaceChildren();
+    for (const offer of offers) {
       const button = document.createElement("button");
-      button.className = "choice-card";
-      button.style.setProperty("--rarity", rarityColors[choice.rarity]);
-      button.style.setProperty("--delay", `${index * 80}ms`);
+      button.className = "merchant-offer";
+      button.style.setProperty("--rarity", rarityColors[offer.rarity]);
+      button.disabled = offer.sold;
       button.innerHTML = `
-        <span class="card-index">0${index + 1}</span>
-        <span class="card-rarity">${choice.rarity}</span>
-        <span class="card-icon">${choice.icon}</span>
-        <strong>${choice.name}</strong>
-        <p>${choice.description}</p>
-        <small>${choice.tag}</small>
-        <i>CHOOSE</i>
+        <span class="offer-icon">${offer.icon}</span>
+        <div><small>${offer.rarity.toUpperCase()}</small><strong>${offer.name}</strong><p>${offer.description}</p></div>
+        <b>${offer.sold ? "SOLD" : `◆ ${offer.price}`}</b>
       `;
       button.addEventListener("click", () => {
-        setVisible(choiceModal, false);
-        choice.select();
-      }, { once: true });
-      cardHost.append(button);
-    });
-    setVisible(choiceModal, true);
-  },
-  showStageComplete: (title, rewards) => {
-    get<HTMLElement>("stage-complete-title").textContent = title;
-    get<HTMLButtonElement>("next-stage").textContent = title.includes("ETERNAL") ? "RETURN TO TITLE" : "DESCEND TO NEXT FLOOR";
-    const rewardsHost = get<HTMLElement>("stage-rewards");
-    rewardsHost.replaceChildren();
-    for (const reward of rewards) {
-      const element = document.createElement("div");
-      element.textContent = reward;
-      rewardsHost.append(element);
+        if (offer.buy()) render();
+      });
+      host.append(button);
     }
-    setVisible(stageModal, true);
-    setVisible(interaction, false);
-  },
-  showGameOver: (summary) => {
-    get<HTMLElement>("run-summary").textContent = summary;
-    setVisible(gameoverModal, true);
-    setVisible(interaction, false);
-  },
-  showMerchant: (offers, gold, close) => {
-    const offerHost = get<HTMLElement>("merchant-offers");
-    const render = (): void => {
-      get<HTMLElement>("merchant-gold").textContent = `◆ ${game.saveData.gold.toLocaleString()} GOLD`;
-      offerHost.replaceChildren();
-      for (const offer of offers) {
-        const button = document.createElement("button");
-        button.className = "merchant-offer";
-        button.style.setProperty("--rarity", rarityColors[offer.rarity]);
-        button.disabled = offer.sold;
-        button.innerHTML = `
-          <span class="offer-icon">${offer.icon}</span>
-          <div><small>${offer.rarity.toUpperCase()}</small><strong>${offer.name}</strong><p>${offer.description}</p></div>
-          <b>${offer.sold ? "SOLD" : `◆ ${offer.cost}`}</b>
-        `;
-        button.addEventListener("click", () => {
-          if (offer.buy()) render();
-        });
-        offerHost.append(button);
-      }
-    };
-    get<HTMLElement>("merchant-gold").textContent = `◆ ${gold.toLocaleString()} GOLD`;
-    const closeButton = get<HTMLButtonElement>("close-merchant");
-    closeButton.onclick = () => {
-      setVisible(merchantModal, false);
-      close();
-    };
-    render();
-    setVisible(merchantModal, true);
-  },
-  showBossIntro: (name, floor) => {
-    get<HTMLElement>("intro-boss-name").textContent = name;
-    const intro = get<HTMLElement>("boss-intro");
-    intro.querySelector("p")!.textContent = `FLOOR ${String(floor).padStart(2, "0")} GUARDIAN`;
-    setVisible(intro, true);
-  },
-  hideBossIntro: () => setVisible(get<HTMLElement>("boss-intro"), false),
-  setInteraction: (visible, label = "OPEN CHEST") => {
-    setVisible(interaction, visible);
-    const labelElement = interaction.querySelector("span");
-    if (labelElement) labelElement.textContent = label;
-  },
-  toast: (message, color = "#65f1d0") => {
-    window.clearTimeout(toastTimeout);
-    toastElement.textContent = message;
-    toastElement.style.setProperty("--toast-color", color);
-    setVisible(toastElement, true);
-    toastTimeout = window.setTimeout(() => setVisible(toastElement, false), 2600);
-  },
-  flash: (color) => {
-    flash.style.background = color;
-    flash.animate([{ opacity: 0.32 }, { opacity: 0 }], { duration: 420, easing: "ease-out" });
-  },
-};
-
-const game = new Game(canvas, minimapCanvas, ui);
-continueButton.disabled = !game.hasSave;
-
-function enterGame(floor: number): void {
-  setVisible(titleScreen, false);
-  setVisible(stageModal, false);
-  setVisible(gameoverModal, false);
-  setVisible(equipmentModal, false);
-  setVisible(merchantModal, false);
-  setVisible(choiceModal, false);
-  setVisible(hud, true);
-  game.start(floor);
+  };
+  render();
+  visible(merchantModal, true);
 }
 
-get<HTMLButtonElement>("new-game").addEventListener("click", () => enterGame(1));
-continueButton.addEventListener("click", () => enterGame(game.saveData.selectedFloor));
+function showInventory(save: SaveData, equipped: Map<EquipmentSlot, import("./types").Equipment>): void {
+  const equipmentHost = get<HTMLElement>("equipment-grid");
+  equipmentHost.replaceChildren(...slots.map((slot) => {
+    const item = equipped.get(slot);
+    const panel = document.createElement("div");
+    panel.className = "equipment-slot";
+    panel.innerHTML = `
+      <small>${slot.toUpperCase()}</small>
+      <span>${item?.icon ?? "·"}</span>
+      <b style="color:${item ? rarityColors[item.rarity] : ""}">${item?.name ?? "EMPTY SLOT"}</b>
+      <em>${item ? `${item.rarity.toUpperCase()} · +${item.level}` : "NO RELIC EQUIPPED"}</em>
+    `;
+    panel.addEventListener("click", () => game.upgradeEquipment(slot));
+    return panel;
+  }));
+  const resources: Array<[string, number]> = Object.entries(save.resources);
+  resources.unshift(["keys", save.keys], ["stones", save.stones], ["rare materials", save.materials]);
+  get<HTMLElement>("resource-grid").replaceChildren(...resources.map(([name, amount]) => {
+    const item = document.createElement("div");
+    item.innerHTML = `<small>${name.toUpperCase()}</small><b>${amount}</b>`;
+    return item;
+  }));
+  visible(inventoryModal, true);
+}
 
-get<HTMLButtonElement>("equipment-button").addEventListener("click", () => {
-  game.setPaused(true);
-  renderEquipment();
-  setVisible(equipmentModal, true);
+function showGame(): void {
+  visible(titleScreen, false);
+  visible(hud, true);
+  visible(victoryModal, false);
+  visible(deathModal, false);
+  game.audio.unlock();
+}
+
+get<HTMLButtonElement>("new-run").addEventListener("click", () => {
+  showGame();
+  game.startNew();
 });
 
-get<HTMLButtonElement>("close-equipment").addEventListener("click", () => {
-  setVisible(equipmentModal, false);
-  game.setPaused(false);
+get<HTMLButtonElement>("continue-run").addEventListener("click", () => {
+  showGame();
+  game.continue();
 });
 
-get<HTMLButtonElement>("forge-button").addEventListener("click", () => {
-  if (game.forgeUpgrade()) {
-    const button = get<HTMLButtonElement>("forge-button");
-    button.textContent = "EQUIPMENT IMPROVED";
-    window.setTimeout(() => { button.textContent = "UPGRADE RANDOM GEAR"; }, 1200);
-  }
+get<HTMLButtonElement>("leave-merchant").addEventListener("click", () => {
+  visible(merchantModal, false);
+  merchantClose?.();
+  merchantClose = undefined;
 });
 
-get<HTMLButtonElement>("next-stage").addEventListener("click", () => {
-  setVisible(stageModal, false);
-  if (!game.continueAfterVictory()) {
-    setVisible(hud, false);
-    setVisible(titleScreen, true);
-  }
-});
+get<HTMLButtonElement>("close-inventory").addEventListener("click", () => game.closeInventory());
 
-get<HTMLButtonElement>("retry-button").addEventListener("click", () => {
-  setVisible(gameoverModal, false);
+get<HTMLButtonElement>("retry-stage").addEventListener("click", () => {
+  visible(deathModal, false);
+  showGame();
   game.retry();
 });
 
-get<HTMLButtonElement>("title-button").addEventListener("click", () => {
+get<HTMLButtonElement>("return-title").addEventListener("click", () => {
+  visible(deathModal, false);
+  visible(hud, false);
+  visible(titleScreen, true);
   game.returnToTitle();
-  setVisible(gameoverModal, false);
-  setVisible(hud, false);
-  setVisible(titleScreen, true);
-  continueButton.disabled = !game.hasSave;
 });
+
+get<HTMLButtonElement>("next-stage").addEventListener("click", () => {
+  visible(victoryModal, false);
+  if (game.saveData.stage >= 20) {
+    visible(hud, false);
+    visible(titleScreen, true);
+    game.returnToTitle();
+  } else {
+    game.nextStage();
+  }
+});
+
+for (const [button, stat] of [
+  ["upgrade-damage", "attack"],
+  ["upgrade-defense", "defense"],
+  ["upgrade-health", "hp"],
+  ["upgrade-speed", "speed"],
+  ["upgrade-crit", "crit"],
+  ["upgrade-mining", "mining"],
+] as const) {
+  get<HTMLButtonElement>(button).addEventListener("click", () => game.upgradePermanent(stat));
+}
 
 window.addEventListener("keydown", (event) => {
-  if (event.code !== "Escape" && event.code !== "KeyI") return;
+  if (event.code !== "KeyI" && event.code !== "Escape") return;
   if (!merchantModal.classList.contains("hidden")) {
-    get<HTMLButtonElement>("close-merchant").click();
+    get<HTMLButtonElement>("leave-merchant").click();
     return;
   }
-  if (!game.isRunning || !choiceModal.classList.contains("hidden") || !stageModal.classList.contains("hidden")) return;
-  const opening = equipmentModal.classList.contains("hidden");
-  if (opening) renderEquipment();
-  setVisible(equipmentModal, opening);
-  game.setPaused(opening);
+  if (!inventoryModal.classList.contains("hidden")) {
+    game.closeInventory();
+    return;
+  }
+  if (event.code === "KeyI" && game.isRunning && choiceModal.classList.contains("hidden") && victoryModal.classList.contains("hidden")) game.toggleInventory();
 });
 
-function renderEquipment(): void {
-  const snapshot = game.equipmentSnapshot();
-  const host = get<HTMLElement>("equipment-slots");
-  host.replaceChildren();
-  for (const slot of slots) {
-    const item = snapshot.items[slot as EquipmentSlot];
-    const card = document.createElement("article");
-    card.className = `equipment-slot ${item ? "filled" : ""}`;
-    if (item) card.style.setProperty("--rarity", rarityColors[item.rarity]);
-    card.innerHTML = item
-      ? `<span>${item.icon}</span><div><small>${slot.toUpperCase()}</small><strong>${item.name}</strong><p>${item.rarity} · +${item.level}</p></div>`
-      : `<span>+</span><div><small>${slot.toUpperCase()}</small><strong>Empty slot</strong><p>Find equipment in the maze</p></div>`;
-    host.append(card);
-  }
-
-  const stats = snapshot.stats;
-  const entries: [string, string][] = [
-    ["Attack", Math.round(stats.attack).toString()],
-    ["Defense", Math.round(stats.defense).toString()],
-    ["Maximum HP", Math.round(stats.maxHp).toString()],
-    ["Critical Chance", `${Math.round(stats.critChance * 100)}%`],
-    ["Critical Damage", `${Math.round(stats.critDamage * 100)}%`],
-    ["Attack Speed", `${Math.round(stats.attackSpeed * 100)}%`],
-    ["Movement", Math.round(stats.moveSpeed).toString()],
-    ["Life Steal", `${Math.round(stats.lifeSteal * 100)}%`],
-    ["Cooldown Reduction", `${Math.round(stats.cooldownReduction * 100)}%`],
-    ["Element Power", Math.round(stats.elementDamage).toString()],
-  ];
-  const statList = get<HTMLElement>("stat-list");
-  statList.replaceChildren();
-  for (const [label, value] of entries) {
-    const row = document.createElement("div");
-    row.innerHTML = `<span>${label}</span><b>${value}</b>`;
-    statList.append(row);
-  }
-}
+get<HTMLElement>("saved-stage").textContent = String(game.saveData.stage).padStart(2, "0");
+visible(get<HTMLButtonElement>("continue-run"), Boolean(game.saveData.seed));
