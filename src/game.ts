@@ -33,6 +33,16 @@ type ChoiceOption = {
   select: () => void;
 };
 
+type MerchantOffer = {
+  name: string;
+  description: string;
+  icon: string;
+  rarity: Rarity;
+  cost: number;
+  sold: boolean;
+  buy: () => boolean;
+};
+
 export interface HudState {
   hp: number;
   maxHp: number;
@@ -42,10 +52,17 @@ export interface HudState {
   xpNeeded: number;
   level: number;
   gold: number;
+  keys: number;
+  equipmentPower: number;
   floor: number;
   floorName: string;
   time: number;
+  timerDanger: boolean;
   objective: string;
+  dashCooldown: number;
+  specialCooldown: number;
+  potionCharges: number;
+  ultimateCharge: number;
   boss?: { name: string; hp: number; maxHp: number; phase: string };
 }
 
@@ -54,6 +71,9 @@ export interface GameUI {
   showChoices: (kicker: string, title: string, choices: ChoiceOption[]) => void;
   showStageComplete: (title: string, rewards: string[]) => void;
   showGameOver: (summary: string) => void;
+  showMerchant: (offers: MerchantOffer[], gold: number, close: () => void) => void;
+  showBossIntro: (name: string, floor: number) => void;
+  hideBossIntro: () => void;
   setInteraction: (visible: boolean, label?: string) => void;
   toast: (message: string, color?: string) => void;
   flash: (color: string) => void;
@@ -92,6 +112,10 @@ interface Player {
   shield: number;
   shieldMax: number;
   shieldRegen: number;
+  specialCooldown: number;
+  specialReady: number;
+  potionCharges: number;
+  ultimateCharge: number;
 }
 
 interface Enemy {
@@ -135,6 +159,22 @@ interface Chest {
   opened: boolean;
   pulse: number;
   secret: boolean;
+  locked: boolean;
+}
+
+interface WorldFeature {
+  x: number;
+  y: number;
+  type: "merchant" | "fountain" | "puzzle";
+  used: boolean;
+  pulse: number;
+}
+
+interface KeyPickup {
+  x: number;
+  y: number;
+  collected: boolean;
+  pulse: number;
 }
 
 interface Particle {
@@ -187,6 +227,8 @@ export class Game {
   private readonly texts: FloatingText[] = [];
   private readonly enemies: Enemy[] = [];
   private readonly chests: Chest[] = [];
+  private readonly features: WorldFeature[] = [];
+  private readonly keyPickups: KeyPickup[] = [];
   private readonly visitedTraps = new Set<string>();
   private readonly equipped = new Map<EquipmentSlot, Equipment>();
   private readonly mouse = { x: 0, y: 0, down: false, active: false };
@@ -202,7 +244,6 @@ export class Game {
   private bossDefeated = false;
   private elapsed = 0;
   private timeLeft = 0;
-  private spawnTimer = 0;
   private flowTimer = 0;
   private mapTimer = 0;
   private screenShake = 0;
@@ -211,6 +252,11 @@ export class Game {
   private enemyId = 0;
   private distanceMap: number[][] = [];
   private nearestChest: Chest | null = null;
+  private nearestFeature: WorldFeature | null = null;
+  private keys = 0;
+  private bossIntroTimer = 0;
+  private arenaLocked = false;
+  private heartbeatTimer = 0;
   private gamepadAttack = false;
   private lastInputX = 1;
   private lastInputY = 0;
@@ -293,6 +339,10 @@ export class Game {
       shield: 0,
       shieldMax: 0,
       shieldRegen: 0,
+      specialCooldown: 8,
+      specialReady: 0,
+      potionCharges: 1,
+      ultimateCharge: 0,
     };
     this.running = true;
     this.paused = false;
@@ -301,25 +351,44 @@ export class Game {
     this.bossDefeated = false;
     this.elapsed = 0;
     this.timeLeft = this.stage.duration;
-    this.spawnTimer = 1;
     this.flowTimer = 0;
     this.mapTimer = 0;
     this.enemies.length = 0;
     this.chests.length = 0;
+    this.features.length = 0;
+    this.keyPickups.length = 0;
     this.projectiles.length = 0;
     this.particles.length = 0;
     this.texts.length = 0;
     this.upgradeStacks.clear();
     this.visitedTraps.clear();
+    this.keys = 0;
+    this.bossIntroTimer = 0;
+    this.arenaLocked = false;
+    this.heartbeatTimer = 0;
     this.audio.setBossMode(false);
 
     this.maze.treasure.forEach((point, index) => {
       const center = this.cellCenter(point);
-      this.chests.push({ ...center, opened: false, pulse: index * 0.8, secret: false });
+      this.chests.push({ ...center, opened: false, pulse: index * 0.8, secret: false, locked: false });
     });
     this.maze.secrets.forEach((point, index) => {
       const center = this.cellCenter(point);
-      this.chests.push({ ...center, opened: false, pulse: index, secret: true });
+      this.chests.push({ ...center, opened: false, pulse: index, secret: true, locked: false });
+    });
+    this.maze.locked.forEach((point, index) => {
+      const center = this.cellCenter(point);
+      this.chests.push({ ...center, opened: false, pulse: index + 2, secret: false, locked: true });
+    });
+    const merchant = this.cellCenter(this.maze.merchant);
+    const fountain = this.cellCenter(this.maze.fountain);
+    this.features.push({ ...merchant, type: "merchant", used: false, pulse: 0 });
+    this.features.push({ ...fountain, type: "fountain", used: false, pulse: 1 });
+    this.maze.puzzles.forEach((point, index) => {
+      this.features.push({ ...this.cellCenter(point), type: "puzzle", used: false, pulse: index + 2 });
+    });
+    this.maze.keys.forEach((point, index) => {
+      this.keyPickups.push({ ...this.cellCenter(point), collected: false, pulse: index });
     });
     this.revealAroundPlayer();
     this.updateFlowField();
@@ -335,9 +404,14 @@ export class Game {
     this.audio.setBossMode(false);
   }
 
-  continueAfterVictory(): void {
+  continueAfterVictory(): boolean {
+    if (this.stage.floor >= 20) {
+      this.returnToTitle();
+      return false;
+    }
     const next = Math.min(20, this.stage.floor + 1);
     this.start(next);
+    return true;
   }
 
   retry(): void {
@@ -347,12 +421,16 @@ export class Game {
   forgeUpgrade(): boolean {
     const items = [...this.equipped.values()].filter((item) => item.level < 20);
     const cost = 50 + (items[0]?.level ?? 0) * 25;
-    if (items.length === 0 || this.save.gold < cost) {
-      this.ui.toast(items.length === 0 ? "No equipment to upgrade" : `Need ${cost} gold`, "#ff6b74");
+    if (items.length === 0 || this.save.gold < cost || this.save.stones < 1) {
+      const message = items.length === 0
+        ? "No equipment to upgrade"
+        : this.save.stones < 1 ? "An upgrade stone is required" : `Need ${cost} gold`;
+      this.ui.toast(message, "#ff6b74");
       return false;
     }
     const item = this.random.pick(items);
     this.save.gold -= cost;
+    this.save.stones -= 1;
     item.level += 1;
     const stored = this.save.equipment.find((entry) => entry.id === item.id);
     if (stored) stored.level = item.level;
@@ -386,20 +464,32 @@ export class Game {
     this.player.invulnerable -= dt;
     this.player.auraTimer -= dt;
     this.player.shieldRegen -= dt;
+    this.player.specialReady -= dt;
     this.screenShake = Math.max(0, this.screenShake - dt * 18);
+
+    if (this.bossIntroTimer > 0) {
+      this.bossIntroTimer -= dt;
+      this.screenShake = 5 + Math.sin(this.elapsed * 22) * 3;
+      this.updateParticles(dt);
+      if (this.bossIntroTimer <= 0) this.finishBossIntro();
+      this.pushHud();
+      return;
+    }
 
     this.updateInput(dt);
     this.revealAroundPlayer();
+    this.collectKeys();
 
     if (!this.bossSpawned) {
       this.timeLeft = Math.max(0, this.timeLeft - dt);
-      this.spawnTimer -= dt;
-      if (this.spawnTimer <= 0) {
-        const living = this.enemies.filter((enemy) => !enemy.dead).length;
-        if (living < this.stage.enemyCount + Math.floor(this.elapsed / 25)) this.spawnEnemy();
-        this.spawnTimer = Math.max(0.45, 1.8 - this.stage.floor * 0.035);
+      if (this.timeLeft <= 20) {
+        this.heartbeatTimer -= dt;
+        if (this.heartbeatTimer <= 0) {
+          this.audio.heartbeat();
+          this.heartbeatTimer = Math.max(0.36, 0.9 - (20 - this.timeLeft) * 0.025);
+        }
       }
-      if (this.timeLeft <= 0) this.spawnBoss();
+      if (this.timeLeft <= 0) this.beginBossIntro();
     }
 
     this.flowTimer -= dt;
@@ -408,11 +498,11 @@ export class Game {
       this.flowTimer = 0.3;
     }
 
-    this.updateEnemies(dt);
+    if (this.bossSpawned) this.updateEnemies(dt);
     this.updateProjectiles(dt);
     this.updateTraps();
     this.updateParticles(dt);
-    this.checkChestInteraction();
+    this.checkInteraction();
     this.mapTimer -= dt;
     if (this.mapTimer <= 0) {
       this.drawMinimap();
@@ -436,7 +526,10 @@ export class Game {
       aimX = Math.abs(gamepad.axes[2] ?? 0) > deadzone ? gamepad.axes[2] : 0;
       aimY = Math.abs(gamepad.axes[3] ?? 0) > deadzone ? gamepad.axes[3] : 0;
       this.gamepadAttack = Math.hypot(aimX, aimY) > deadzone || (gamepad.buttons[7]?.value ?? 0) > 0.2;
-      if (gamepad.buttons[0]?.pressed && this.nearestChest) this.openChest(this.nearestChest);
+      if (gamepad.buttons[0]?.pressed) {
+        if (this.nearestChest) this.openChest(this.nearestChest);
+        else if (this.nearestFeature) this.interactFeature(this.nearestFeature);
+      }
       if (gamepad.buttons[1]?.pressed && this.player.dashReady <= 0) this.dash(dx, dy);
     }
 
@@ -460,7 +553,7 @@ export class Game {
       if (nearest) angle = Math.atan2(nearest.y - this.player.y, nearest.x - this.player.x);
     }
     this.player.facing = angle;
-    if ((this.mouse.down || this.gamepadAttack || keyMap.has("KeyJ")) && this.player.shootCooldown <= 0) this.shoot(angle);
+    if (this.bossSpawned && (this.mouse.down || this.gamepadAttack || keyMap.has("KeyJ")) && this.player.shootCooldown <= 0) this.shoot(angle);
   }
 
   private movePlayer(dx: number, dy: number): void {
@@ -483,6 +576,48 @@ export class Game {
     this.player.invulnerable = 0.25;
     this.audio.dash();
     for (let i = 0; i < 14; i += 1) this.addParticle(this.player.x, this.player.y, "#65f1d0", 3, 120);
+  }
+
+  private useSpecial(): void {
+    if (this.player.specialReady > 0 || !this.bossSpawned) return;
+    this.player.specialReady = this.player.specialCooldown;
+    for (let index = 0; index < 12; index += 1) {
+      const angle = (Math.PI * 2 * index) / 12;
+      this.activateProjectile({
+        x: this.player.x,
+        y: this.player.y,
+        vx: Math.cos(angle) * 420,
+        vy: Math.sin(angle) * 420,
+        radius: 6,
+        damage: this.player.attack * 1.35,
+        life: 1,
+        pierce: 1,
+        enemy: false,
+        color: "#f3bd58",
+      });
+    }
+    this.audio.level();
+    this.screenShake = 6;
+  }
+
+  private usePotion(): void {
+    if (this.player.potionCharges <= 0 || this.player.hp >= this.player.maxHp) return;
+    this.player.potionCharges -= 1;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * 0.55);
+    this.audio.level();
+    for (let i = 0; i < 24; i += 1) this.addParticle(this.player.x, this.player.y, "#65e6a2", 4, 140);
+  }
+
+  private useUltimate(): void {
+    if (this.player.ultimateCharge < 100 || !this.bossSpawned) return;
+    const boss = this.enemies.find((enemy) => enemy.boss && !enemy.dead);
+    if (!boss) return;
+    this.player.ultimateCharge = 0;
+    this.damageEnemy(boss, this.player.attack * 18, true, "#ffe69a");
+    this.player.invulnerable = 1.2;
+    this.screenShake = 18;
+    this.ui.flash("#f3bd58");
+    for (let i = 0; i < 60; i += 1) this.addParticle(boss.x, boss.y, "#ffe69a", 6, 300);
   }
 
   private shoot(angle: number): void {
@@ -508,55 +643,35 @@ export class Game {
     this.audio.shoot();
   }
 
-  private spawnEnemy(forceElite = false): void {
-    const playerCell = this.worldToCell(this.player.x, this.player.y);
-    const candidates = this.maze.floors.filter((point) => {
-      const distance = Math.abs(point.x - playerCell.x) + Math.abs(point.y - playerCell.y);
-      return distance > 7 && distance < 16 && this.maze.cells[point.y][point.x].discovered;
-    });
-    const fallback = this.maze.floors.filter((point) => Math.abs(point.x - playerCell.x) + Math.abs(point.y - playerCell.y) > 8);
-    const point = this.random.pick(candidates.length > 0 ? candidates : fallback);
-    if (!point) return;
-    const center = this.cellCenter(point);
-    const unlockedKinds = enemyKinds.slice(0, Math.min(enemyKinds.length, 2 + Math.floor(this.stage.floor / 2)));
-    const kind = this.random.pick(unlockedKinds);
-    const elite = forceElite || this.random.next() < this.stage.eliteChance;
-    const scale = elite ? 2.5 : 1;
-    this.enemies.push({
-      id: ++this.enemyId,
-      ...center,
-      radius: kind.radius * (elite ? 1.25 : 1),
-      hp: this.stage.enemyHp * scale * (0.85 + this.random.next() * 0.3),
-      maxHp: this.stage.enemyHp * scale,
-      damage: this.stage.enemyDamage * (elite ? 1.7 : 1),
-      speed: kind.speed * (1 + this.stage.floor * 0.006),
-      kind,
-      elite,
-      boss: false,
-      name: elite ? `Elite ${kind.name}` : kind.name,
-      hitFlash: 0,
-      attackCooldown: this.random.next(),
-      specialCooldown: 1 + this.random.next() * 2,
-      chargeTimer: 0,
-      phase: 1,
-      dead: false,
-    });
+  private beginBossIntro(): void {
+    if (this.bossIntroTimer > 0 || this.bossSpawned) return;
+    this.timeLeft = 0;
+    this.bossIntroTimer = 3.2;
+    this.arenaLocked = true;
+    this.screenShake = 18;
+    this.audio.warning();
+    this.ui.flash("#c7253f");
+    this.ui.showBossIntro(this.stage.bossName, this.stage.floor);
   }
 
-  private spawnBoss(): void {
+  private finishBossIntro(): void {
+    const center = this.cellCenter(this.maze.boss);
+    this.player.x = center.x;
+    this.player.y = center.y + TILE_SIZE * 1.45;
+    this.player.invulnerable = 1.5;
+    this.projectiles.forEach((projectile) => { projectile.active = false; });
     this.bossSpawned = true;
     this.audio.setBossMode(true);
     this.audio.boss();
-    const center = this.cellCenter(this.maze.boss);
     const kind = enemyKinds[Math.min(enemyKinds.length - 1, Math.floor(this.stage.floor / 3) + 2)];
     this.enemies.push({
       id: ++this.enemyId,
       ...center,
-      radius: 31,
+      radius: this.stage.bossSize,
       hp: this.stage.bossHp,
       maxHp: this.stage.bossHp,
-      damage: this.stage.enemyDamage * 2.2,
-      speed: 76 + this.stage.floor * 1.5,
+      damage: this.stage.bossDamage,
+      speed: this.stage.bossSpeed,
       kind,
       elite: true,
       boss: true,
@@ -569,8 +684,9 @@ export class Game {
       dead: false,
     });
     this.maze.cells[this.maze.boss.y][this.maze.boss.x].discovered = true;
-    this.ui.flash("#d756ff");
-    this.ui.toast(`${this.stage.bossName} has awakened`, "#ff6b9d");
+    this.ui.hideBossIntro();
+    this.ui.flash("#d8a84c");
+    this.ui.toast(`${this.stage.bossName} · The arena is sealed`, "#f3bd58");
     this.screenShake = 14;
   }
 
@@ -591,23 +707,9 @@ export class Game {
         const hpRatio = enemy.hp / enemy.maxHp;
         enemy.phase = hpRatio > 0.66 ? 1 : hpRatio > 0.3 ? 2 : 3;
         if (enemy.specialCooldown <= 0) {
-          if (enemy.phase === 1) this.radialBurst(enemy, 8, "#e75d88");
-          else if (enemy.phase === 2) {
-            this.radialBurst(enemy, 12, "#b56cff");
-            for (let i = 0; i < 2; i += 1) this.spawnEnemy(true);
-          } else {
-            this.radialBurst(enemy, 18, "#ff734d");
-            enemy.chargeTimer = 0.55;
-            this.screenShake = 10;
-          }
-          enemy.specialCooldown = Math.max(0.7, 2.5 - enemy.phase * 0.4);
+          this.useBossPattern(enemy, Math.atan2(dy, dx));
+          enemy.specialCooldown = Math.max(0.62, 2.7 - enemy.phase * 0.45 - this.stage.floor * 0.025);
         }
-      } else if (enemy.kind.behavior === "ranged" && distance < 370 && enemy.specialCooldown <= 0) {
-        this.enemyShot(enemy, Math.atan2(dy, dx));
-        enemy.specialCooldown = 1.5 + this.random.next();
-      } else if (enemy.kind.behavior === "charger" && distance < 300 && enemy.specialCooldown <= 0) {
-        enemy.chargeTimer = 0.45;
-        enemy.specialCooldown = 3;
       }
 
       const movement = enemy.chargeTimer > 0
@@ -693,6 +795,34 @@ export class Game {
     }
   }
 
+  private useBossPattern(enemy: Enemy, targetAngle: number): void {
+    const pattern = (this.stage.floor - 1) % 5;
+    const bonus = Math.floor(this.stage.floor / 5);
+    if (pattern === 0) {
+      this.radialBurst(enemy, 7 + enemy.phase * 3 + bonus, "#e75d88");
+    } else if (pattern === 1) {
+      const shots = 3 + enemy.phase * 2;
+      for (let index = 0; index < shots; index += 1) {
+        const offset = (index - (shots - 1) / 2) * 0.16;
+        this.enemyShot(enemy, targetAngle + offset);
+      }
+    } else if (pattern === 2) {
+      this.radialBurst(enemy, 8 + enemy.phase * 2 + bonus, "#b56cff");
+      window.setTimeout(() => {
+        if (!enemy.dead && this.running) this.radialBurst(enemy, 8 + enemy.phase * 2 + bonus, "#7c8dff");
+      }, 260);
+    } else if (pattern === 3) {
+      enemy.chargeTimer = 0.75;
+      this.radialBurst(enemy, 6 + enemy.phase * 2, "#ff9a55");
+      this.screenShake = 10;
+    } else {
+      this.radialBurst(enemy, 10 + enemy.phase * 3 + bonus, "#e1b75e");
+      for (let index = 0; index < enemy.phase + 1; index += 1) {
+        this.enemyShot(enemy, targetAngle + (index - enemy.phase / 2) * 0.24);
+      }
+    }
+  }
+
   private updateProjectiles(dt: number): void {
     for (const projectile of this.projectiles) {
       if (!projectile.active) continue;
@@ -730,6 +860,7 @@ export class Game {
   private damageEnemy(enemy: Enemy, amount: number, critical: boolean, color?: string): void {
     if (enemy.dead) return;
     enemy.hp -= amount;
+    if (enemy.boss) this.player.ultimateCharge = Math.min(100, this.player.ultimateCharge + amount / enemy.maxHp * 180);
     enemy.hitFlash = 0.09;
     this.audio.hit(critical);
     this.texts.push({
@@ -747,25 +878,18 @@ export class Game {
 
   private killEnemy(enemy: Enemy): void {
     enemy.dead = true;
-    for (let i = 0; i < (enemy.boss ? 60 : enemy.elite ? 22 : 10); i += 1) {
-      this.addParticle(enemy.x, enemy.y, enemy.boss ? "#ffca69" : enemy.kind.color, enemy.boss ? 6 : 3, enemy.boss ? 260 : 150);
-    }
-    if (enemy.boss) {
-      this.completeStage();
-      return;
-    }
-    const xp = enemy.kind.xp * (enemy.elite ? 4 : 1);
-    this.gainXp(xp);
-    const gold = Math.max(1, Math.round((2 + this.stage.floor * 0.5) * (enemy.elite ? 4 : 1)));
-    this.save.gold += gold;
-    if (enemy.elite) this.ui.toast(`Elite defeated · +${gold} gold`, "#ffbf58");
+    for (let i = 0; i < 60; i += 1) this.addParticle(enemy.x, enemy.y, "#ffca69", 6, 260);
+    this.completeStage();
   }
 
   private chainLightning(source: Enemy, amount: number): void {
     const target = this.enemies
       .filter((enemy) => !enemy.dead && enemy.id !== source.id && Math.hypot(enemy.x - source.x, enemy.y - source.y) < 150)
       .sort((a, b) => Math.hypot(a.x - source.x, a.y - source.y) - Math.hypot(b.x - source.x, b.y - source.y))[0];
-    if (!target) return;
+    if (!target) {
+      this.damageEnemy(source, amount, false, "#80dfff");
+      return;
+    }
     this.damageEnemy(target, amount, false, "#80dfff");
     const steps = 8;
     for (let index = 0; index < steps; index += 1) {
@@ -841,44 +965,220 @@ export class Game {
     };
   }
 
-  private checkChestInteraction(): void {
+  private checkInteraction(): void {
     this.nearestChest = this.chests
       .filter((chest) => !chest.opened && Math.hypot(chest.x - this.player.x, chest.y - this.player.y) < 64)
       .sort((a, b) => Math.hypot(a.x - this.player.x, a.y - this.player.y) - Math.hypot(b.x - this.player.x, b.y - this.player.y))[0] ?? null;
-    this.ui.setInteraction(Boolean(this.nearestChest), this.nearestChest?.secret ? "OPEN SECRET CACHE" : "OPEN CHEST");
+    this.nearestFeature = this.features
+      .filter((feature) => (!feature.used || feature.type === "merchant") && Math.hypot(feature.x - this.player.x, feature.y - this.player.y) < 68)
+      .sort((a, b) => Math.hypot(a.x - this.player.x, a.y - this.player.y) - Math.hypot(b.x - this.player.x, b.y - this.player.y))[0] ?? null;
+    const label = this.nearestChest
+      ? this.nearestChest.locked ? `UNLOCK CHEST · ${this.keys} KEY${this.keys === 1 ? "" : "S"}` : this.nearestChest.secret ? "OPEN SECRET CACHE" : "OPEN CHEST"
+      : this.nearestFeature?.type === "merchant" ? "TRADE WITH MERCHANT"
+        : this.nearestFeature?.type === "fountain" ? "DRINK FROM FOUNTAIN"
+          : this.nearestFeature?.type === "puzzle" ? "INSPECT ANCIENT SIGILS" : undefined;
+    this.ui.setInteraction(Boolean(this.nearestChest || this.nearestFeature), label);
   }
 
   private openChest(chest: Chest): void {
     if (chest.opened || this.paused) return;
+    if (chest.locked && this.keys <= 0) {
+      this.ui.toast("A labyrinth key is required", "#f05a62");
+      this.audio.hurt();
+      return;
+    }
+    if (chest.locked) this.keys -= 1;
     chest.opened = true;
     this.paused = true;
+    this.save.gold += 10 + this.stage.floor * 2;
+    this.persistSave();
     this.audio.chest();
     for (let i = 0; i < 28; i += 1) this.addParticle(chest.x, chest.y, chest.secret ? "#d278ff" : "#ffd36b", 4, 190);
-    const options: ChoiceOption[] = [];
+    this.player.ultimateCharge = Math.min(100, this.player.ultimateCharge + 15);
     const upgradePool = this.random.shuffle([...upgrades]).filter(
       (upgrade) => (this.upgradeStacks.get(upgrade.id) ?? 0) < upgrade.maxStacks,
     );
-    options.push(this.upgradeChoice(upgradePool[0]));
-    options.push(this.equipmentChoice(this.generateEquipment(chest.secret ? 2 : 0)));
-    if (this.random.next() < 0.5) {
-      const gold = 45 + this.stage.floor * 12;
-      options.push({
-        name: "Labyrinth Hoard",
-        description: `Gain ${gold} gold and restore 25 health`,
-        icon: "◆",
-        rarity: chest.secret ? "Epic" : "Rare",
-        tag: "IMMEDIATE",
-        select: () => {
-          this.save.gold += gold;
-          this.player.hp = Math.min(this.player.maxHp, this.player.hp + 25);
-          this.paused = false;
-          this.ui.toast(`+${gold} gold`, "#ffd36b");
-        },
-      });
-    } else {
-      options.push(this.upgradeChoice(upgradePool[1]));
-    }
+    const options = this.random.shuffle<ChoiceOption>([
+      this.upgradeChoice(upgradePool[0]),
+      this.upgradeChoice(upgradePool[1]),
+      this.equipmentChoice(this.generateEquipment(chest.secret || chest.locked ? 2 : 0)),
+      this.goldChoice(chest.secret || chest.locked),
+      this.keyChoice(),
+      this.stoneChoice(),
+      this.healingChoice(),
+    ]).slice(0, 3).map((option) => ({
+      ...option,
+      select: () => {
+        option.select();
+        this.gainXp(18 + this.stage.floor * 2);
+      },
+    }));
     this.ui.showChoices(chest.secret ? "SECRET CACHE DISCOVERED" : "TREASURE FOUND", "CHOOSE YOUR REWARD", options);
+  }
+
+  private goldChoice(valuable: boolean): ChoiceOption {
+    const gold = (valuable ? 90 : 50) + this.stage.floor * 14;
+    return {
+      name: "Gilded Hoard",
+      description: `Take ${gold} gold from the forgotten treasury`,
+      icon: "◆",
+      rarity: valuable ? "Epic" : "Rare",
+      tag: "CURRENCY",
+      select: () => {
+        this.save.gold += gold;
+        this.persistSave();
+        this.paused = false;
+        this.ui.toast(`+${gold} gold`, "#f3bd58");
+      },
+    };
+  }
+
+  private keyChoice(): ChoiceOption {
+    return {
+      name: "Labyrinth Key",
+      description: "Opens one sealed treasure chamber",
+      icon: "⚿",
+      rarity: "Rare",
+      tag: "KEY ITEM",
+      select: () => {
+        this.keys += 1;
+        this.paused = false;
+        this.ui.toast("Labyrinth key acquired", "#f3bd58");
+      },
+    };
+  }
+
+  private stoneChoice(): ChoiceOption {
+    const stones = 1 + Math.floor(this.stage.floor / 7);
+    return {
+      name: "Upgrade Stone",
+      description: `Gain ${stones} stone${stones === 1 ? "" : "s"} for the forge`,
+      icon: "⬡",
+      rarity: "Epic",
+      tag: "CRAFTING MATERIAL",
+      select: () => {
+        this.save.stones += stones;
+        this.persistSave();
+        this.paused = false;
+        this.ui.toast(`+${stones} upgrade stone${stones === 1 ? "" : "s"}`, "#b76cff");
+      },
+    };
+  }
+
+  private healingChoice(): ChoiceOption {
+    return {
+      name: "Fountain Essence",
+      description: "Fully restore health and gain an extra potion",
+      icon: "♥",
+      rarity: "Common",
+      tag: "RESTORATION",
+      select: () => {
+        this.player.hp = this.player.maxHp;
+        this.player.potionCharges += 1;
+        this.paused = false;
+        this.ui.toast("Vitality restored", "#68d5a4");
+      },
+    };
+  }
+
+  private interactFeature(feature: WorldFeature): void {
+    if (this.paused || (feature.used && feature.type !== "merchant")) return;
+    if (feature.type === "merchant") {
+      this.openMerchant();
+      return;
+    }
+    if (feature.type === "fountain") {
+      feature.used = true;
+      this.player.hp = this.player.maxHp;
+      this.player.potionCharges += 1;
+      this.audio.level();
+      this.ui.toast("The golden water restores body and spirit", "#65f1d0");
+      return;
+    }
+    feature.used = true;
+    this.paused = true;
+    const correct = this.random.int(0, 2);
+    const sigils = ["SIGIL OF DAWN", "SIGIL OF ASH", "SIGIL OF ECHOES"];
+    const choices = sigils.map((name, index): ChoiceOption => ({
+      name,
+      description: index === correct ? "The stone hums with a hidden resonance" : "Its meaning has been lost to time",
+      icon: ["☀", "♨", "◇"][index],
+      rarity: index === correct ? "Legendary" : "Common",
+      tag: "ANCIENT RUNE",
+      select: () => {
+        this.paused = false;
+        if (index === correct) {
+          this.keys += 1;
+          this.save.gold += 75 + this.stage.floor * 8;
+          this.persistSave();
+          this.gainXp(25);
+          this.audio.level();
+          this.ui.toast("The sigils yield a key and hidden gold", "#f3bd58");
+        } else {
+          this.damagePlayer(10 + this.stage.floor);
+          this.ui.toast("The false sigil answers with a curse", "#f05a62");
+        }
+      },
+    }));
+    this.ui.showChoices("ANCIENT PUZZLE", "CHOOSE THE TRUE SIGIL", choices);
+  }
+
+  private openMerchant(): void {
+    this.paused = true;
+    const offers: MerchantOffer[] = [];
+    const addOffer = (
+      name: string,
+      description: string,
+      icon: string,
+      rarity: Rarity,
+      cost: number,
+      action: () => void,
+    ): void => {
+      const offer: MerchantOffer = {
+        name,
+        description,
+        icon,
+        rarity,
+        cost,
+        sold: false,
+        buy: () => {
+          if (offer.sold || this.save.gold < cost) {
+            this.ui.toast(offer.sold ? "Already purchased" : `Need ${cost} gold`, "#f05a62");
+            return false;
+          }
+          this.save.gold -= cost;
+          offer.sold = true;
+          action();
+          this.persistSave();
+          this.audio.chest();
+          return true;
+        },
+      };
+      offers.push(offer);
+    };
+    const equipment = this.generateEquipment(1);
+    addOffer(equipment.name, `${equipment.slot} · ${this.describeStats(equipment)}`, equipment.icon, equipment.rarity, 110 + this.stage.floor * 12, () => this.acquireEquipment(equipment));
+    addOffer("Restorative Draught", "Fully restore health and gain one potion", "♥", "Common", 55 + this.stage.floor * 3, () => {
+      this.player.hp = this.player.maxHp;
+      this.player.potionCharges += 1;
+    });
+    addOffer("Runesmith's Stone", "Two upgrade stones for the forge", "⬡", "Epic", 120 + this.stage.floor * 8, () => { this.save.stones += 2; });
+    const legendary = this.generateEquipment(4);
+    legendary.rarity = "Legendary";
+    addOffer("Legendary Reliquary", `Contains ${legendary.name}`, "✦", "Legendary", 280 + this.stage.floor * 20, () => this.acquireEquipment(legendary));
+    addOffer("Permanent Might", "+1 permanent power for every future descent", "☀", "Mythic", 450 + this.stage.floor * 30, () => { this.save.permanentPower += 1; });
+    this.ui.showMerchant(offers, this.save.gold, () => { this.paused = false; });
+  }
+
+  private collectKeys(): void {
+    for (const key of this.keyPickups) {
+      if (key.collected || Math.hypot(key.x - this.player.x, key.y - this.player.y) > 28) continue;
+      key.collected = true;
+      this.keys += 1;
+      this.audio.chest();
+      this.ui.toast("Labyrinth key found", "#f3bd58");
+      for (let i = 0; i < 14; i += 1) this.addParticle(key.x, key.y, "#f3bd58", 3, 120);
+    }
   }
 
   private equipmentChoice(item: Equipment): ChoiceOption {
@@ -984,11 +1284,21 @@ export class Game {
     this.save.crystals += crystals;
     this.save.unlockedFloor = Math.max(this.save.unlockedFloor, Math.min(20, this.stage.floor + 1));
     this.save.selectedFloor = Math.min(20, this.stage.floor + 1);
-    if (this.stage.floor === 20) this.save.permanentPower += 1;
+    this.save.permanentPower += 1;
     const bossItem = this.generateEquipment(2);
+    const rareItem = this.generateEquipment(1);
+    if (rarityOrder.indexOf(rareItem.rarity) < rarityOrder.indexOf("Rare")) rareItem.rarity = "Rare";
     this.acquireEquipment(bossItem);
+    this.acquireEquipment(rareItem);
     this.persistSave();
-    const rewards = [`◆ ${gold} GOLD`, `⬡ ${stones} UPGRADE STONES`, `✦ ${crystals} CRYSTALS`, `${bossItem.icon} ${bossItem.name}`];
+    this.arenaLocked = false;
+    const rewards = [
+      `◆ ${gold} GOLD`,
+      `⬡ ${stones} UPGRADE STONES`,
+      `${bossItem.icon} ${bossItem.name}`,
+      `${rareItem.icon} ${rareItem.name}`,
+      `☀ +1 PERMANENT POWER`,
+    ];
     window.setTimeout(() => {
       this.ui.showStageComplete(
         this.stage.floor === 20 ? "THE ETERNAL MAZE CONQUERED" : `FLOOR ${String(this.stage.floor).padStart(2, "0")} CLEARED`,
@@ -1012,15 +1322,22 @@ export class Game {
     const height = this.canvas.height;
     const shakeX = this.screenShake > 0 ? (Math.random() - 0.5) * this.screenShake : 0;
     const shakeY = this.screenShake > 0 ? (Math.random() - 0.5) * this.screenShake : 0;
-    const cameraX = this.player.x - width / 2 - shakeX;
-    const cameraY = this.player.y - height / 2 - shakeY;
+    const introFocus = this.bossIntroTimer > 0 ? this.cellCenter(this.maze.boss) : this.player;
+    const introProgress = this.bossIntroTimer > 0 ? 1 - this.bossIntroTimer / 3.2 : 0;
+    const zoom = 1 + introProgress * 0.16;
+    const cameraX = introFocus.x - width / (2 * zoom);
+    const cameraY = introFocus.y - height / (2 * zoom);
     ctx.fillStyle = "#070910";
     ctx.fillRect(0, 0, width, height);
 
     ctx.save();
-    ctx.translate(-cameraX, -cameraY);
-    this.drawMaze(cameraX, cameraY, width, height);
+    ctx.translate(width / 2 + shakeX, height / 2 + shakeY);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-introFocus.x, -introFocus.y);
+    this.drawMaze(cameraX, cameraY, width / zoom, height / zoom);
     this.drawTraps();
+    this.drawFeatures();
+    this.drawKeys();
     this.drawChests();
     this.drawProjectiles();
     this.drawEnemies();
@@ -1030,6 +1347,11 @@ export class Game {
     ctx.restore();
 
     this.drawLighting();
+    if ((!this.bossSpawned && this.timeLeft < 20) || this.bossIntroTimer > 0) {
+      const danger = this.bossIntroTimer > 0 ? 0.36 : (20 - this.timeLeft) / 20 * 0.2;
+      ctx.fillStyle = `rgba(25, 0, 8, ${danger})`;
+      ctx.fillRect(0, 0, width, height);
+    }
   }
 
   private drawMaze(cameraX: number, cameraY: number, width: number, height: number): void {
@@ -1103,6 +1425,80 @@ export class Game {
     }
   }
 
+  private drawFeatures(): void {
+    const ctx = this.context;
+    for (const feature of this.features) {
+      feature.pulse += 0.02;
+      if (feature.used && feature.type !== "merchant") continue;
+      ctx.save();
+      ctx.translate(feature.x, feature.y + Math.sin(feature.pulse * 2) * 2);
+      if (feature.type === "merchant") {
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = "#f3bd58";
+        const sprite = this.sprites.get(91);
+        if (sprite?.complete && sprite.naturalWidth > 0) ctx.drawImage(sprite, -22, -26, 44, 44);
+        ctx.fillStyle = "#f3bd58";
+        ctx.fillRect(-14, 18, 28, 3);
+        ctx.fillStyle = "#fff0b3";
+        ctx.font = "bold 9px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("MERCHANT", 0, 33);
+      } else if (feature.type === "fountain") {
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = "#65e6d5";
+        ctx.fillStyle = "#7d8c95";
+        ctx.fillRect(-18, 7, 36, 10);
+        ctx.fillStyle = "#c9a95d";
+        ctx.fillRect(-13, -3, 26, 12);
+        ctx.fillStyle = "#63dfd1";
+        ctx.beginPath();
+        ctx.ellipse(0, -3, 11, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#b9fff3";
+        ctx.fillRect(-2, -17, 4, 14);
+      } else {
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = "#1a1721";
+        ctx.strokeStyle = "#b999e8";
+        ctx.lineWidth = 2;
+        ctx.fillRect(-14, -14, 28, 28);
+        ctx.strokeRect(-14, -14, 28, 28);
+        ctx.rotate(-Math.PI / 4);
+        ctx.fillStyle = "#d9baff";
+        ctx.font = "22px Georgia";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("◇", 0, 0);
+      }
+      ctx.restore();
+    }
+  }
+
+  private drawKeys(): void {
+    const ctx = this.context;
+    for (const key of this.keyPickups) {
+      if (key.collected) continue;
+      key.pulse += 0.03;
+      ctx.save();
+      ctx.translate(key.x, key.y + Math.sin(key.pulse * 3) * 4);
+      ctx.shadowBlur = 16;
+      ctx.shadowColor = "#f3bd58";
+      ctx.fillStyle = "#f3bd58";
+      ctx.beginPath();
+      ctx.arc(-6, 0, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = this.stage.palette[1];
+      ctx.beginPath();
+      ctx.arc(-6, 0, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f3bd58";
+      ctx.fillRect(0, -2, 14, 4);
+      ctx.fillRect(8, 2, 3, 5);
+      ctx.fillRect(13, 2, 3, 5);
+      ctx.restore();
+    }
+  }
+
   private drawChests(): void {
     const ctx = this.context;
     for (const chest of this.chests) {
@@ -1111,7 +1507,7 @@ export class Game {
       const glow = 8 + Math.sin(chest.pulse * 2) * 3;
       ctx.save();
       ctx.shadowBlur = glow;
-      ctx.shadowColor = chest.secret ? "#b85eff" : "#ffd05b";
+      ctx.shadowColor = chest.secret ? "#b85eff" : chest.locked ? "#ff8e3d" : "#ffd05b";
       const sprite = this.sprites.get(16);
       if (sprite?.complete && sprite.naturalWidth > 0) {
         ctx.drawImage(sprite, chest.x - 18, chest.y - 20, 36, 36);
@@ -1121,6 +1517,15 @@ export class Game {
         ctx.fillStyle = chest.secret ? "#d08bff" : "#ffd56a";
         ctx.fillRect(chest.x - 15, chest.y - 13, 30, 8);
         ctx.fillRect(chest.x - 3, chest.y - 13, 6, 23);
+      }
+      if (chest.locked) {
+        ctx.fillStyle = "#f3bd58";
+        ctx.fillRect(chest.x - 3, chest.y - 7, 6, 8);
+        ctx.strokeStyle = "#f3bd58";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(chest.x, chest.y - 8, 6, Math.PI, 0);
+        ctx.stroke();
       }
       ctx.restore();
     }
@@ -1282,10 +1687,23 @@ export class Game {
       for (let x = 0; x < this.maze.width; x += 1) {
         const cell = this.maze.cells[y][x];
         if (!cell.discovered || cell.wall) continue;
-        ctx.fillStyle = cell.room === "boss" && this.bossSpawned ? "#df547e" : cell.room === "treasure" ? "#e4b94f" : "#4c596b";
+        ctx.fillStyle = cell.room === "boss" ? "#8e4058" : cell.room === "merchant" ? "#c49b4d" : "#4c596b";
         ctx.fillRect(offsetX + x * scale, offsetY + y * scale, Math.ceil(scale), Math.ceil(scale));
       }
     }
+    for (const chest of this.chests) {
+      const cell = this.worldToCell(chest.x, chest.y);
+      if (chest.opened || !this.maze.cells[cell.y][cell.x].discovered) continue;
+      ctx.fillStyle = chest.secret ? "#b76cff" : "#f3bd58";
+      ctx.fillRect(offsetX + cell.x * scale - 1, offsetY + cell.y * scale - 1, Math.max(3, scale + 2), Math.max(3, scale + 2));
+    }
+    const merchant = this.maze.merchant;
+    if (this.maze.cells[merchant.y][merchant.x].discovered) {
+      ctx.fillStyle = "#ffe099";
+      ctx.fillRect(offsetX + merchant.x * scale - 1, offsetY + merchant.y * scale - 1, Math.max(3, scale + 2), Math.max(3, scale + 2));
+    }
+    ctx.fillStyle = "#e25069";
+    ctx.fillRect(offsetX + this.maze.boss.x * scale - 1, offsetY + this.maze.boss.y * scale - 1, Math.max(3, scale + 2), Math.max(3, scale + 2));
     const playerCell = this.worldToCell(this.player.x, this.player.y);
     ctx.fillStyle = "#72f4d4";
     ctx.fillRect(offsetX + playerCell.x * scale - 1, offsetY + playerCell.y * scale - 1, Math.max(3, scale + 2), Math.max(3, scale + 2));
@@ -1330,10 +1748,21 @@ export class Game {
       xpNeeded: this.player.xpNeeded,
       level: this.player.level,
       gold: this.save.gold,
+      keys: this.keys,
+      equipmentPower: this.equipmentPower(),
       floor: this.stage.floor,
       floorName: this.stage.name,
       time: this.timeLeft,
-      objective: this.bossSpawned ? `Find and defeat ${this.stage.bossName}` : "Explore · Fight · Grow stronger",
+      timerDanger: !this.bossSpawned && this.timeLeft <= 20,
+      objective: this.bossIntroTimer > 0
+        ? "The arena is sealing"
+        : this.bossSpawned
+          ? `Defeat ${this.stage.bossName}`
+          : `${this.chests.filter((chest) => !chest.opened).length} treasures remain · find keys and prepare`,
+      dashCooldown: Math.max(0, this.player.dashReady / this.player.dashCooldown),
+      specialCooldown: Math.max(0, this.player.specialReady / this.player.specialCooldown),
+      potionCharges: this.player.potionCharges,
+      ultimateCharge: this.player.ultimateCharge,
       boss: boss ? {
         name: boss.name,
         hp: boss.hp,
@@ -1341,6 +1770,17 @@ export class Game {
         phase: boss.phase === 1 ? "PHASE I" : boss.phase === 2 ? "PHASE II" : "ENRAGED",
       } : undefined,
     });
+  }
+
+  private equipmentPower(): number {
+    const stats = this.computedStats();
+    return Math.round(
+      stats.attack * 2 +
+      stats.defense * 3 +
+      stats.maxHp * 0.12 +
+      stats.critChance * 100 +
+      [...this.equipped.values()].reduce((total, item) => total + rarityOrder.indexOf(item.rarity) * 12 + item.level * 4, 0),
+    );
   }
 
   private computedStats(): typeof baseStats {
@@ -1427,6 +1867,10 @@ export class Game {
   }
 
   private circleWalkable(x: number, y: number, radius: number): boolean {
+    if (this.arenaLocked && this.bossSpawned && !this.bossDefeated) {
+      const arena = this.cellCenter(this.maze.boss);
+      if (Math.abs(x - arena.x) > TILE_SIZE * 2.2 || Math.abs(y - arena.y) > TILE_SIZE * 2.2) return false;
+    }
     const points = [
       { x: x - radius, y: y - radius },
       { x: x + radius, y: y - radius },
@@ -1466,7 +1910,13 @@ export class Game {
         event.preventDefault();
         if (this.running && !this.paused) this.dash(this.lastInputX, this.lastInputY);
       }
-      if (event.code === "KeyE" && this.nearestChest && !this.paused) this.openChest(this.nearestChest);
+      if (event.code === "KeyE" && !this.paused) {
+        if (this.nearestChest) this.openChest(this.nearestChest);
+        else if (this.nearestFeature) this.interactFeature(this.nearestFeature);
+      }
+      if (event.code === "KeyR" && !this.paused) this.useSpecial();
+      if (event.code === "KeyQ" && !this.paused) this.usePotion();
+      if (event.code === "KeyF" && !this.paused) this.useUltimate();
     });
     window.addEventListener("keyup", (event) => keyMap.delete(event.code));
     this.canvas.addEventListener("pointermove", (event) => {

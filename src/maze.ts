@@ -118,8 +118,16 @@ export function generateMaze(
     }
   }
 
-  const ordered = [...floors].sort((a, b) => distance(b, spawn) - distance(a, spawn));
-  const boss = ordered[0];
+  const ordered = [...floors]
+    .filter((point) => point.x > 3 && point.y > 3 && point.x < width - 4 && point.y < height - 4)
+    .sort((a, b) => distance(b, spawn) - distance(a, spawn));
+  const boss = ordered[0] ?? floors[floors.length - 1];
+  for (let y = boss.y - 2; y <= boss.y + 2; y += 1) {
+    for (let x = boss.x - 2; x <= boss.x + 2; x += 1) {
+      cells[y][x].wall = false;
+      if (!floors.some((point) => point.x === x && point.y === y)) floors.push({ x, y });
+    }
+  }
   const deadEnds = random.shuffle(
     floors.filter((point) => floorNeighbors(cells, point.x, point.y) === 1 && distance(point, spawn) > 8),
   );
@@ -133,12 +141,16 @@ export function generateMaze(
     if (!treasure.some((other) => distance(point, other) < 5)) treasure.push(point);
   }
 
+  const remaining = available.filter((point) => !treasure.includes(point));
   const traps = random
-    .shuffle(available.filter((point) => !treasure.includes(point)))
+    .shuffle([...remaining])
     .slice(0, trapCount);
-  const elites = random
-    .shuffle(available.filter((point) => !treasure.includes(point) && !traps.includes(point)))
-    .slice(0, Math.max(2, Math.floor(treasureCount / 2)));
+  const specialRooms = random.shuffle(remaining.filter((point) => !traps.includes(point)));
+  const puzzles = specialRooms.slice(0, 2);
+  const locked = specialRooms.slice(2, 4);
+  const merchant = specialRooms[4] ?? available[Math.floor(available.length / 2)];
+  const fountain = specialRooms[5] ?? available[Math.floor(available.length / 3)];
+  const keys = specialRooms.slice(6, 9);
 
   const secrets: Vec2[] = [];
   const secretWalls = random.shuffle(
@@ -170,12 +182,11 @@ export function generateMaze(
   markRoom(cells, boss, "boss");
   treasure.forEach((point) => markRoom(cells, point, "treasure"));
   traps.forEach((point) => markRoom(cells, point, "trap"));
-  elites.forEach((point) => markRoom(cells, point, "elite"));
+  puzzles.forEach((point) => markRoom(cells, point, "puzzle"));
+  locked.forEach((point) => markRoom(cells, point, "locked"));
+  markRoom(cells, merchant, "merchant");
+  markRoom(cells, fountain, "fountain");
   secrets.forEach((point) => markRoom(cells, point, "secret"));
 
-  for (const point of available.slice(0, Math.floor(available.length / 9))) {
-    if (cells[point.y][point.x].room === "passage") markRoom(cells, point, "monster");
-  }
-
-  return { width, height, cells, spawn, boss, treasure, traps, elites, secrets, floors };
+  return { width, height, cells, spawn, boss, treasure, traps, puzzles, locked, merchant, fountain, keys, secrets, floors };
 }

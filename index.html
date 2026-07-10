@@ -16,24 +16,30 @@
 
       <div id="hud" class="hidden">
         <section class="hud-left panel">
-          <div class="portrait"><span>✦</span></div>
+          <div class="portrait"><span>♞</span><small id="hero-level">LV 1</small></div>
           <div class="vitals">
             <div class="bar hp"><i id="hp-fill"></i><b id="hp-text">100 / 100</b></div>
             <div class="bar mana"><i id="mana-fill"></i><b id="mana-text">100 / 100</b></div>
             <div class="bar exp"><i id="exp-fill"></i><b id="exp-text">LV 1</b></div>
+            <div class="hero-meta">
+              <span><i>◆</i><b id="gold">0</b> GOLD</span>
+              <span><i>⚔</i><b id="equipment-power">18</b> POWER</span>
+            </div>
           </div>
         </section>
 
         <section class="hud-center">
           <div class="stage-label">FLOOR <strong id="stage-number">01</strong></div>
+          <div id="floor-title">FORGOTTEN THRESHOLD</div>
           <div id="timer" class="timer">02:00</div>
-          <div id="objective">Explore the labyrinth</div>
+          <div id="timer-caption">UNTIL THE GUARDIAN AWAKENS</div>
         </section>
 
         <section class="hud-right panel">
-          <div class="currency"><span>◆</span><b id="gold">0</b></div>
+          <div class="currency"><span>⚿</span><b id="keys">0</b><small>KEYS</small></div>
           <button id="equipment-button" class="icon-button" aria-label="Open equipment">I</button>
           <div id="minimap"></div>
+          <div class="map-objective"><small>CURRENT OBJECTIVE</small><span id="objective">Explore the labyrinth</span></div>
         </section>
 
         <section id="boss-hud" class="boss-hud hidden">
@@ -42,6 +48,14 @@
         </section>
 
         <div class="controls-hint"><kbd>WASD</kbd> MOVE <kbd>CLICK</kbd> ATTACK <kbd>SPACE</kbd> DASH <kbd>E</kbd> OPEN</div>
+
+        <section id="hotbar" class="hotbar panel">
+          <div class="hotbar-slot weapon active"><kbd>1</kbd><span>⚔</span><small>WEAPON</small><i></i></div>
+          <div class="hotbar-slot"><kbd>SPACE</kbd><span>➤</span><small>DASH</small><i id="dash-cooldown"></i></div>
+          <div class="hotbar-slot"><kbd>R</kbd><span>✦</span><small>SPECIAL</small><i id="special-cooldown"></i></div>
+          <div class="hotbar-slot"><kbd>Q</kbd><span>♥</span><small id="potion-count">POTION ×1</small><i></i></div>
+          <div class="hotbar-slot ultimate"><kbd>F</kbd><span>☀</span><small>ULTIMATE</small><i id="ultimate-charge"></i></div>
+        </section>
       </div>
 
       <main id="title-screen" class="screen active">
@@ -83,6 +97,18 @@
         </div>
       </section>
 
+      <section id="merchant-modal" class="modal dark hidden">
+        <div class="merchant-window panel">
+          <header>
+            <div class="merchant-portrait">♜</div>
+            <div><p>THE GILDED WANDERER</p><h2>LABYRINTH MERCHANT</h2><span>Gold has no value to the dead.</span></div>
+            <button id="close-merchant" class="close-button">×</button>
+          </header>
+          <div id="merchant-gold" class="merchant-gold">◆ 0 GOLD</div>
+          <div id="merchant-offers" class="merchant-offers"></div>
+        </div>
+      </section>
+
       <section id="stage-modal" class="modal dark hidden">
         <div class="stage-window panel">
           <p class="eyebrow">GUARDIAN VANQUISHED</p>
@@ -110,6 +136,12 @@
       </section>
 
       <div id="interaction" class="interaction hidden"><kbd>E</kbd><span>OPEN CHEST</span></div>
+      <section id="boss-intro" class="boss-intro hidden">
+        <div class="boss-sigil">♜</div>
+        <p>FLOOR GUARDIAN</p>
+        <h2 id="intro-boss-name">GRAVETIDE COLOSSUS</h2>
+        <span>THE SEAL HAS BROKEN</span>
+      </section>
       <div id="toast" class="toast hidden"></div>
       <div id="flash"></div>
     </div>

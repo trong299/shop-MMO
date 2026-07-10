@@ -2,11 +2,13 @@ export type Vec2 = { x: number; y: number };
 
 export type RoomType =
   | "spawn"
-  | "monster"
   | "treasure"
   | "trap"
-  | "elite"
+  | "puzzle"
   | "secret"
+  | "locked"
+  | "merchant"
+  | "fountain"
   | "boss"
   | "passage";
 
@@ -77,10 +79,9 @@ export interface StageConfig {
   mazeWidth: number;
   mazeHeight: number;
   duration: number;
-  enemyHp: number;
-  enemyDamage: number;
-  enemyCount: number;
-  eliteChance: number;
+  bossDamage: number;
+  bossSpeed: number;
+  bossSize: number;
   trapCount: number;
   treasureCount: number;
   bossName: string;
@@ -116,7 +117,11 @@ export interface Maze {
   boss: Vec2;
   treasure: Vec2[];
   traps: Vec2[];
-  elites: Vec2[];
+  puzzles: Vec2[];
+  locked: Vec2[];
+  merchant: Vec2;
+  fountain: Vec2;
+  keys: Vec2[];
   secrets: Vec2[];
   floors: Vec2[];
 }

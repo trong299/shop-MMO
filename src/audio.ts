@@ -59,6 +59,17 @@ export class AudioSystem {
     this.tone(55, 0.6, "sawtooth", 0.14, 30);
   }
 
+  heartbeat(): void {
+    this.tone(58, 0.1, "sine", 0.12, -8);
+    window.setTimeout(() => this.tone(52, 0.07, "sine", 0.1, -6), 130);
+  }
+
+  warning(): void {
+    [110, 82, 55].forEach((note, index) => {
+      window.setTimeout(() => this.tone(note, 0.18, "sawtooth", 0.45, -20), index * 230);
+    });
+  }
+
   victory(): void {
     [261, 329, 392, 523].forEach((note, index) => {
       window.setTimeout(() => this.tone(note, 0.22, "triangle", 0.13), index * 120);

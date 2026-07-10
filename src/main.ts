@@ -15,6 +15,7 @@ const titleScreen = get<HTMLElement>("title-screen");
 const hud = get<HTMLElement>("hud");
 const choiceModal = get<HTMLElement>("choice-modal");
 const equipmentModal = get<HTMLElement>("equipment-modal");
+const merchantModal = get<HTMLElement>("merchant-modal");
 const stageModal = get<HTMLElement>("stage-modal");
 const gameoverModal = get<HTMLElement>("gameover-modal");
 const interaction = get<HTMLElement>("interaction");
@@ -37,12 +38,23 @@ function updateHud(state: HudState): void {
   get<HTMLElement>("hp-text").textContent = `${Math.ceil(Math.max(0, state.hp))} / ${Math.round(state.maxHp)}`;
   get<HTMLElement>("mana-text").textContent = `${Math.ceil(Math.max(0, state.mana))} / ${Math.round(state.maxMana)}`;
   get<HTMLElement>("exp-text").textContent = `LV ${state.level} · ${Math.round(xpPercent)}%`;
+  get<HTMLElement>("hero-level").textContent = `LV ${state.level}`;
   get<HTMLElement>("gold").textContent = state.gold.toLocaleString();
+  get<HTMLElement>("keys").textContent = state.keys.toString();
+  get<HTMLElement>("equipment-power").textContent = state.equipmentPower.toLocaleString();
   get<HTMLElement>("stage-number").textContent = String(state.floor).padStart(2, "0");
-  get<HTMLElement>("objective").textContent = `${state.floorName} · ${state.objective}`;
+  get<HTMLElement>("floor-title").textContent = state.floorName;
+  get<HTMLElement>("objective").textContent = state.objective;
   const minutes = Math.floor(state.time / 60);
   const seconds = Math.floor(state.time % 60);
-  get<HTMLElement>("timer").textContent = state.boss ? "BOSS" : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  const timer = get<HTMLElement>("timer");
+  timer.textContent = state.boss ? "BOSS" : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  timer.classList.toggle("danger", state.timerDanger);
+  get<HTMLElement>("timer-caption").textContent = state.boss ? "THE ARENA IS SEALED" : state.timerDanger ? "THE GUARDIAN IS STIRRING" : "UNTIL THE GUARDIAN AWAKENS";
+  get<HTMLElement>("dash-cooldown").style.height = `${state.dashCooldown * 100}%`;
+  get<HTMLElement>("special-cooldown").style.height = `${state.specialCooldown * 100}%`;
+  get<HTMLElement>("ultimate-charge").style.height = `${100 - state.ultimateCharge}%`;
+  get<HTMLElement>("potion-count").textContent = `POTION ×${state.potionCharges}`;
 
   const bossHud = get<HTMLElement>("boss-hud");
   setVisible(bossHud, Boolean(state.boss));
@@ -84,6 +96,7 @@ const ui: GameUI = {
   },
   showStageComplete: (title, rewards) => {
     get<HTMLElement>("stage-complete-title").textContent = title;
+    get<HTMLButtonElement>("next-stage").textContent = title.includes("ETERNAL") ? "RETURN TO TITLE" : "DESCEND TO NEXT FLOOR";
     const rewardsHost = get<HTMLElement>("stage-rewards");
     rewardsHost.replaceChildren();
     for (const reward of rewards) {
@@ -99,6 +112,43 @@ const ui: GameUI = {
     setVisible(gameoverModal, true);
     setVisible(interaction, false);
   },
+  showMerchant: (offers, gold, close) => {
+    const offerHost = get<HTMLElement>("merchant-offers");
+    const render = (): void => {
+      get<HTMLElement>("merchant-gold").textContent = `◆ ${game.saveData.gold.toLocaleString()} GOLD`;
+      offerHost.replaceChildren();
+      for (const offer of offers) {
+        const button = document.createElement("button");
+        button.className = "merchant-offer";
+        button.style.setProperty("--rarity", rarityColors[offer.rarity]);
+        button.disabled = offer.sold;
+        button.innerHTML = `
+          <span class="offer-icon">${offer.icon}</span>
+          <div><small>${offer.rarity.toUpperCase()}</small><strong>${offer.name}</strong><p>${offer.description}</p></div>
+          <b>${offer.sold ? "SOLD" : `◆ ${offer.cost}`}</b>
+        `;
+        button.addEventListener("click", () => {
+          if (offer.buy()) render();
+        });
+        offerHost.append(button);
+      }
+    };
+    get<HTMLElement>("merchant-gold").textContent = `◆ ${gold.toLocaleString()} GOLD`;
+    const closeButton = get<HTMLButtonElement>("close-merchant");
+    closeButton.onclick = () => {
+      setVisible(merchantModal, false);
+      close();
+    };
+    render();
+    setVisible(merchantModal, true);
+  },
+  showBossIntro: (name, floor) => {
+    get<HTMLElement>("intro-boss-name").textContent = name;
+    const intro = get<HTMLElement>("boss-intro");
+    intro.querySelector("p")!.textContent = `FLOOR ${String(floor).padStart(2, "0")} GUARDIAN`;
+    setVisible(intro, true);
+  },
+  hideBossIntro: () => setVisible(get<HTMLElement>("boss-intro"), false),
   setInteraction: (visible, label = "OPEN CHEST") => {
     setVisible(interaction, visible);
     const labelElement = interaction.querySelector("span");
@@ -125,6 +175,7 @@ function enterGame(floor: number): void {
   setVisible(stageModal, false);
   setVisible(gameoverModal, false);
   setVisible(equipmentModal, false);
+  setVisible(merchantModal, false);
   setVisible(choiceModal, false);
   setVisible(hud, true);
   game.start(floor);
@@ -154,7 +205,10 @@ get<HTMLButtonElement>("forge-button").addEventListener("click", () => {
 
 get<HTMLButtonElement>("next-stage").addEventListener("click", () => {
   setVisible(stageModal, false);
-  game.continueAfterVictory();
+  if (!game.continueAfterVictory()) {
+    setVisible(hud, false);
+    setVisible(titleScreen, true);
+  }
 });
 
 get<HTMLButtonElement>("retry-button").addEventListener("click", () => {
@@ -172,6 +226,10 @@ get<HTMLButtonElement>("title-button").addEventListener("click", () => {
 
 window.addEventListener("keydown", (event) => {
   if (event.code !== "Escape" && event.code !== "KeyI") return;
+  if (!merchantModal.classList.contains("hidden")) {
+    get<HTMLButtonElement>("close-merchant").click();
+    return;
+  }
   if (!game.isRunning || !choiceModal.classList.contains("hidden") || !stageModal.classList.contains("hidden")) return;
   const opening = equipmentModal.classList.contains("hidden");
   if (opening) renderEquipment();
