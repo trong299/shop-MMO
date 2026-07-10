@@ -82,6 +82,7 @@ export class Game {
   private readonly lightContext = this.lightCanvas.getContext("2d")!;
   private save = this.loadSave();
   private world = new World(this.save.seed || Date.now(), this.save.stage, this.save);
+  private equipped = new Map<EquipmentSlot, Equipment>();
   private player = this.createPlayer();
   private boss?: Boss;
   private arena?: Arena;
@@ -89,7 +90,6 @@ export class Game {
   private projectiles: Projectile[] = [];
   private particles: Particle[] = [];
   private texts: FloatingText[] = [];
-  private equipped = new Map<EquipmentSlot, Equipment>();
   private camera: Camera = { x: 0, y: 0, shake: 0 };
   private random = new Random(Date.now());
   private running = false;
